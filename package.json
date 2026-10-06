@@ -1,0 +1,17 @@
+{
+  "name": "sitelens",
+  "version": "1.0.0",
+  "description": "Open-source website intelligence: traffic estimates, tech stack, SEO, performance and security for any domain, with a free REST API.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js",
+    "tranco": "node scripts/fetch-tranco.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
