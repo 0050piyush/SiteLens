@@ -40,7 +40,7 @@ function postJson(url, body, headers) {
 }
 
 /** Sends one email. Throws if the provider rejects it. */
-export async function sendEmail({ to, subject, text, html }) {
+export async function sendEmail({ to, subject, text, html, replyTo }) {
   const c = config();
   if (!c) throw new Error('Email is not configured');
   if (c.provider === 'console') {
@@ -49,7 +49,7 @@ export async function sendEmail({ to, subject, text, html }) {
   }
   if (c.provider === 'resend') {
     await postJson(`${process.env.EMAIL_API_BASE || 'https://api.resend.com'}/emails`,
-      { from: c.from, to: [to], subject, text, html }, { authorization: `Bearer ${c.key}` });
+      { from: c.from, to: [to], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}) }, { authorization: `Bearer ${c.key}` });
     return;
   }
   const m = /^(.*)<([^>]+)>\s*$/.exec(c.from);
@@ -57,6 +57,7 @@ export async function sendEmail({ to, subject, text, html }) {
     personalizations: [{ to: [{ email: to }] }],
     from: m ? { email: m[2].trim(), name: m[1].trim().replace(/^"|"$/g, '') } : { email: c.from },
     subject,
+    ...(replyTo ? { reply_to: { email: replyTo } } : {}),
     content: [{ type: 'text/plain', value: text }, { type: 'text/html', value: html }],
   }, { authorization: `Bearer ${c.key}` });
 }
@@ -102,5 +103,15 @@ export function resetEmail(link) {
       link,
       footer: "This link expires in 1 hour and works once. If you didn't ask for this, ignore this email: your password won't change.",
     }),
+  };
+}
+
+/** Forwards a contact-form message to the site owner (plain text; Reply goes to the sender). */
+export function contactEmail({ name, email, topic, message }) {
+  const text = `New message from the SiteLens contact form\n\nFrom: ${name} <${email}>\nTopic: ${topic}\n\n${message}\n`;
+  return {
+    subject: `[SiteLens] ${topic}: message from ${name}`.slice(0, 150),
+    text,
+    html: `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap;font-size:14px">${esc(text)}</pre>`,
   };
 }

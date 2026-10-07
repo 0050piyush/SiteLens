@@ -17,7 +17,8 @@ import {
   billingEnabled, priceFor, createCheckoutSession, createPortalSession, verifyWebhook, applyStripeEvent,
 } from './src/stripe.js';
 import { timingSafeEqual } from 'node:crypto';
-import { emailEnabled, sendEmail, verificationEmail, resetEmail } from './src/mailer.js';
+import { emailEnabled, sendEmail, verificationEmail, resetEmail, contactEmail } from './src/mailer.js';
+import { Messages } from './src/messages.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -48,6 +49,8 @@ const ALLOWED_ORIGINS = new Set(csv(process.env.SITELENS_ALLOWED_ORIGINS).map((o
 // Open to anyone: health checks, docs, and endpoints that carry their own
 // authentication (Stripe's signed webhook, the admin token).
 const OPEN_ROUTES = new Set(['/api/v1/status', '/api/openapi.json', '/api/v1/billing/webhook', '/api/v1/admin/grant']);
+const messages = new Messages();
+const CONTACT_TOPICS = ['General question', 'API plans & sales', 'Account & billing', 'Report a bug', 'Privacy request', 'Partnership'];
 const accounts = new Accounts();
 const CONTACT = process.env.SITELENS_CONTACT || null;
 // Hourly limits. Key holders also have a monthly quota from their plan.
@@ -356,6 +359,8 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     ...stats,
     access: PUBLIC_API ? 'public' : 'API key required (X-API-Key header)',
     accounts: true,
+    contactForm: true,
+    contactTopics: CONTACT_TOPICS,
     billing: billingEnabled(),
     email: emailEnabled(),
     contact: CONTACT,
@@ -551,6 +556,39 @@ route('POST', '/api/v1/billing/webhook', 'requests', async (req, res) => {
   const event = verifyWebhook(raw, req.headers['stripe-signature']);
   const result = applyStripeEvent(event, accounts);
   send(res, 200, { received: true, result });
+});
+
+// ---- contact form ----
+
+const contactAttempts = new Map(); // ip -> { reset, n }
+
+route('POST', '/api/v1/contact', 'requests', async (req, res) => {
+  const ip = clientIp(req);
+  const now = Date.now();
+  let a = contactAttempts.get(ip);
+  if (!a || now > a.reset) a = { reset: now + 3600 * 1000, n: 0 };
+  contactAttempts.set(ip, a);
+  // Only accepted messages count, so fixing a typo doesn't lock anyone out.
+  if (a.n >= Number(process.env.SITELENS_CONTACT_PER_HOUR || 5)) throw new HttpError(429, 'Too many messages. Please try again later.');
+  const body = await readBody(req, 32 * 1024);
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Invalid message');
+  // Honeypot: real visitors never see or fill the "website" field.
+  if (String(body.website || '').trim()) { a.n++; return send(res, 200, { ok: true }); }
+  const name = String(body.name || '').trim().slice(0, 100);
+  const email = String(body.email || '').trim().toLowerCase().slice(0, 254);
+  const topic = CONTACT_TOPICS.includes(body.topic) ? body.topic : CONTACT_TOPICS[0];
+  const message = String(body.message || '').trim();
+  if (!name) throw new HttpError(400, 'Please enter your name.');
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) throw new HttpError(400, 'Please enter a valid email address so we can reply.');
+  if (message.length < 10) throw new HttpError(400, 'Please write a little more (at least 10 characters).');
+  if (message.length > 5000) throw new HttpError(400, 'Please keep your message under 5,000 characters.');
+  a.n++;
+  const saved = messages.add({ name, email, topic, message, ip });
+  // Forward to the site owner when both email and a contact address are set.
+  if (emailEnabled() && CONTACT && /@/.test(CONTACT)) {
+    try { await sendEmail({ to: CONTACT, replyTo: email, ...contactEmail({ name, email, topic, message }) }); } catch (err) { console.error('Contact email failed:', err.message); }
+  }
+  send(res, 201, { ok: true, id: saved.id, message: 'Thanks! Your message has been sent. We usually reply within 1–2 business days.' });
 });
 
 // For payments taken outside Stripe (bank transfer, UPI…): grant a plan by hand.

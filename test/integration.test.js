@@ -99,6 +99,7 @@ before(async () => {
       SITELENS_ADMIN_TOKEN: ADMIN_TOKEN, SITELENS_AUTH_PER_15MIN: '50',
       STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: `http://127.0.0.1:${stripePort}`,
       STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_BUSINESS: 'price_business',
+      SITELENS_CONTACT: 'owner@sitelens.test', SITELENS_CONTACT_PER_HOUR: '3',
       RESEND_API_KEY: 're_test', SITELENS_EMAIL_FROM: 'SiteLens <noreply@sitelens.test>', EMAIL_API_BASE: `http://127.0.0.1:${mailPort}`,
     },
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -491,4 +492,33 @@ test('email verification resend and password reset', async () => {
   assert.equal((await get('/api/v1/account', auth)).status, 401, 'old sessions are signed out');
   assert.equal((await post('/api/v1/auth/login', { email, password: 'first password 1' }, site)).status, 401);
   assert.equal((await post('/api/v1/auth/login', { email, password: 'new password 22' }, site)).status, 200);
+});
+
+test('contact form: validation, honeypot, forwarding and rate limit', async () => {
+  const site = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.20' };
+  const msg = { name: 'Asha', email: 'asha@example.com', topic: 'API plans & sales', message: 'Do you offer annual billing for the Pro plan?' };
+  assert.equal((await post('/api/v1/contact', { ...msg, email: 'not-an-email' }, site)).status, 400);
+  assert.equal((await post('/api/v1/contact', { ...msg, message: 'hi' }, site)).status, 400);
+  // Bots that fill the hidden field get a quiet "ok" and nothing is sent.
+  const before = emails.length;
+  assert.equal((await post('/api/v1/contact', { ...msg, website: 'spam.example' }, site)).status, 200);
+  assert.equal(emails.length, before);
+
+  const sent = await post('/api/v1/contact', msg, site);
+  assert.equal(sent.status, 201);
+  assert.match(sent.body.message, /Thanks/);
+  const fwd = lastEmailTo('owner@sitelens.test');
+  assert.equal(fwd.reply_to, 'asha@example.com', 'Reply goes to the sender');
+  assert.match(fwd.subject, /API plans & sales: message from Asha/);
+  assert.match(fwd.text, /annual billing/);
+  // Unknown topics fall back to the default one.
+  await post('/api/v1/contact', { ...msg, topic: '<script>' }, site);
+  assert.match(lastEmailTo('owner@sitelens.test').subject, /General question/);
+  // Accepted messages (and bot hits) count toward the limit: 5 per hour in production, 3 here.
+  assert.equal((await post('/api/v1/contact', msg, site)).status, 429);
+  assert.equal((await post('/api/v1/contact', msg, { ...site, 'x-forwarded-for': '198.51.100.21' })).status, 201, 'other visitors unaffected');
+  // Outsiders without the website's headers can't post.
+  assert.equal((await post('/api/v1/contact', msg, {})).status, 401);
+  const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'messages.json'), 'utf8')).messages;
+  assert.equal(saved.at(-1).email, 'asha@example.com');
 });

@@ -1,43 +1,12 @@
+import { h, safeUrl, ext } from './dom.js';
 import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './charts.js';
 import { API_BASE, CONTACT } from './config.js';
 import { PLANS, FREE_DAILY_REPORTS } from './shared/plans.js';
 import { analyzeLite } from './lite.js';
+import { aboutView, faqView, contactView, privacyView, sitemapView } from './pages.js';
 
 const main = document.getElementById('main');
 
-// ---- DOM helpers (all text goes through textContent) ------------------------
-
-function h(tag, attrs, ...children) {
-  const el = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v == null || v === false) continue;
-      if (k === 'class') el.className = v;
-      else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
-      else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
-      else if (k === 'href' || k === 'src') { const u = safeUrl(v); if (u) el.setAttribute(k, u); }
-      else el.setAttribute(k, v === true ? '' : v);
-    }
-  }
-  append(el, children);
-  return el;
-}
-function append(el, children) {
-  for (const c of children.flat(Infinity)) {
-    if (c == null || c === false) continue;
-    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  }
-  return el;
-}
-function safeUrl(u) {
-  const s = String(u);
-  if (s.startsWith('#') || s.startsWith('/')) return s;
-  try {
-    const p = new URL(s);
-    return ['http:', 'https:', 'mailto:'].includes(p.protocol) ? p.href : null;
-  } catch { return null; }
-}
-const ext = (href, ...children) => h('a', { href, target: '_blank', rel: 'noopener noreferrer nofollow' }, ...children);
 
 // ---- formatting --------------------------------------------------------------
 
@@ -1545,6 +1514,11 @@ function route() {
     case 'forgot': return forgotView();
     case 'reset': return resetView(params);
     case 'verify': return verifyView(params);
+    case 'about': return aboutView(pageCtx);
+    case 'faq': return faqView(pageCtx);
+    case 'contact': return contactView(pageCtx, params);
+    case 'privacy': return privacyView(pageCtx);
+    case 'sitemap': return sitemapView(pageCtx);
     default: return render(homeView());
   }
 }
@@ -1561,6 +1535,9 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
   root.dataset.theme = dark ? 'light' : 'dark';
   try { localStorage.setItem('sitelens-theme', root.dataset.theme); } catch { /* ignore */ }
 });
+// What the content pages (pages.js) need from the app.
+const pageCtx = { render, api, hasBackend, contactHref, fmt, CONTACT };
+
 function refreshNav() {
   const link = document.getElementById('nav-account');
   if (!link) return;
@@ -1570,6 +1547,8 @@ function refreshNav() {
 }
 
 window.addEventListener('hashchange', route);
+const yearEl = document.getElementById('year');
+if (yearEl) yearEl.textContent = String(new Date().getFullYear());
 refreshNav();
 refreshSuggestions();
 // Rankings and API need the SiteLens server; hide them in browser-only mode.

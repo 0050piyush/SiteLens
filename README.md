@@ -16,6 +16,8 @@ SiteLens is a self-hostable alternative to traffic-intelligence tools such as Si
 
 Your **last 5 searches** appear as one-click chips and as suggestions in the search and compare boxes, with a Clear button. Reports you've already run are **saved in your browser for 24 hours** (up to 15), so revisiting a site or adding it to a comparison is instant. Re-run forces a fresh check.
 
+The site also has **About us**, **FAQ** (searchable), **Contact us**, **Privacy policy** and **Sitemap** pages, linked from the footer. Contact-form messages are saved to `data/messages.json` and, when email is set up and `SITELENS_CONTACT` is an email address, forwarded to you with Reply going to the sender (5 messages per hour per visitor, with a hidden bot trap). Without the server, the form opens the visitor's email app addressed to `SITELENS_CONTACT`. The privacy policy describes what this code actually stores; review it, and add your business details, before launch.
+
 There's also a **watchlist** that tells you what changed since your last visit, **rankings** (Tranco top sites plus a leaderboard of every site analyzed on your server), **similar sites** (matched by category, topics, tech stack and outbound links), and a **REST API** (key-protected) with an in-browser playground.
 
 ### Honest about its limits
@@ -170,7 +172,7 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | Listen address |
 | `SITELENS_API_KEYS` | none | Comma-separated `key:plan` entries (plan: `starter`, `pro`, `business`). Required for any caller other than your own website |
 | `SITELENS_ALLOWED_ORIGINS` | none | Comma-separated origins of your own frontends allowed to call the API without a key, e.g. `https://0050piyush.github.io` |
-| `SITELENS_CONTACT` | none | Where people can get a key (email or URL); shown in 401 responses and on the API page |
+| `SITELENS_CONTACT` | none | Your contact email (or URL): pricing buttons, 401 responses, and where contact-form messages are forwarded |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | none | Stripe API key and webhook signing secret (see Accounts and payments) |
 | `STRIPE_PRICE_STARTER` / `_PRO` / `_BUSINESS` | none | Stripe price IDs for each plan |
 | `RESEND_API_KEY` or `SENDGRID_API_KEY` | none | Email provider for verification and password-reset emails |
