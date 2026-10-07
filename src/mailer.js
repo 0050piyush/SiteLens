@@ -70,10 +70,10 @@ function layout({ heading, intro, button, link, footer }) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:14px;border:1px solid #e1e0d9">
 <tr><td style="padding:28px">
-<div style="font-weight:800;font-size:22px;letter-spacing:-0.04em;margin-bottom:20px">web<span style="color:#4f46e5">vieu</span></div>
+<div style="font-weight:800;font-size:22px;letter-spacing:-0.04em;margin-bottom:20px">web<span style="color:#6d28d9">vieu</span></div>
 <h1 style="font-size:20px;margin:0 0 12px">${esc(heading)}</h1>
 <p style="font-size:15px;line-height:1.5;color:#52514e;margin:0 0 22px">${esc(intro)}</p>
-<a href="${esc(link)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px">${esc(button)}</a>
+<a href="${esc(link)}" style="display:inline-block;background:#5b3df0;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px">${esc(button)}</a>
 <p style="font-size:13px;line-height:1.5;color:#7a7873;margin:22px 0 0">${esc(footer)}</p>
 <p style="font-size:12px;color:#7a7873;margin:14px 0 0;word-break:break-all">${esc(link)}</p>
 </td></tr></table></td></tr></table></body></html>`;

@@ -12,7 +12,7 @@
   --accent: #2a78d6;
   --accent-ink: #1c5cab;
   --accent-wash: #e6f0fc;
-  --brand-a: #0284c7; --brand-b: #4f46e5;
+  --brand-a: #2563eb; --brand-b: #7c3aed;
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
   --good: #0ca30c; --good-ink: #006300; --warn: #fab219; --warn-ink: #8a5a00; --bad: #d03b3b; --bad-ink: #b02a2a;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
@@ -26,8 +26,7 @@
     --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #8f8d87;
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.1);
     --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a;
-  --brand-a: #38bdf8; --brand-b: #818cf8;
-    --brand-a: #38bdf8; --brand-b: #818cf8;
+    --brand-a: #60a5fa; --brand-b: #a78bfa;
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
     --good-ink: #2fc42f; --warn-ink: #fab219; --bad-ink: #ef6b6b;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -38,6 +37,7 @@
   --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #8f8d87;
   --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.1);
   --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a;
+  --brand-a: #60a5fa; --brand-b: #a78bfa;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
   --good-ink: #2fc42f; --warn-ink: #fab219; --bad-ink: #ef6b6b;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -69,7 +69,7 @@ main.wrap { flex: 1; padding-top: 16px; padding-bottom: 64px; outline: none; }
 .topbar-inner { display: flex; align-items: center; gap: 16px; height: 60px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; color: var(--ink); letter-spacing: -0.02em; }
 .brand:hover { text-decoration: none; }
-.brand-mark { flex: none; border-radius: 9px; box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28); }
+.brand-mark { flex: none; border-radius: 9px; box-shadow: 0 2px 8px rgba(109, 40, 217, 0.28); }
 .wordmark { font-weight: 800; font-size: 21px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
 .wordmark b { font-weight: inherit; background: linear-gradient(90deg, var(--brand-a), var(--brand-b)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .footer-brand .wordmark { font-size: 19px; }
