@@ -25,6 +25,7 @@ Similarweb buys clickstream panel data, which is how it can report traffic sourc
 You need Node.js 20 or newer. There are no npm dependencies.
 
 ```bash
+git clone https://github.com/0050piyush/sitelens.git
 cd sitelens
 npm start            # http://localhost:8080
 npm test             # unit + end-to-end tests (fully offline)
@@ -38,6 +39,13 @@ With Docker:
 ```bash
 docker build -t sitelens . && docker run -p 8080:8080 -v sitelens-data:/app/data sitelens
 ```
+
+### Hostinger (Business or Cloud plans)
+
+1. hPanel → **Websites → Add Website → Node.js Apps → Import Git Repository**, then pick this repo.
+2. Node version **22.x**, no build command, start command `npm start` (entry file `server.js`).
+3. Environment variables: `NODE_ENV=production`, `SITELENS_TRUST_PROXY=1`, `SITELENS_TRANCO_LIMIT=100000`.
+4. Deploy, then attach your domain or a subdomain. The app listens on the `PORT` Hostinger provides.
 
 The server needs outbound HTTPS and DNS. It connects directly and does not use an `HTTPS_PROXY`.
 
