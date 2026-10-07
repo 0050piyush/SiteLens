@@ -265,10 +265,12 @@ function homeView() {
     h('div', { class: 'card-head' }, h('h2', null, 'Recently analyzed on this server'), h('a', { href: '#/top' }, 'See rankings →')),
     recentBox);
   const watch = watchlist();
+  const lead = h('p', { class: 'lead' }, 'Traffic estimates, global rank, tech stack, SEO, performance and security for any domain. Free, no sign-up.');
+  hasBackend().then((ok) => { if (ok) lead.textContent = lead.textContent.replace(/\.$/, ', with an open API.'); });
   const view = h('div', null,
     h('section', { class: 'hero' },
       h('h1', null, 'See inside ', h('span', { class: 'hl' }, 'any website'), '.'),
-      h('p', { class: 'lead' }, 'Traffic estimates, global rank, tech stack, SEO, performance and security for any domain. Free, no sign-up, with an open API.'),
+      lead,
       searchForm({ big: true }),
       h('div', { class: 'chips examples' },
         h('span', { class: 'muted small', style: { alignSelf: 'center' } }, 'Try:'),
@@ -1150,4 +1152,8 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
 });
 window.addEventListener('hashchange', route);
 refreshSuggestions();
+// Rankings and API need the SiteLens server; hide them in browser-only mode.
+hasBackend().then((ok) => {
+  if (!ok) document.querySelectorAll('[data-needs-server]').forEach((el) => { el.hidden = true; });
+});
 route();
