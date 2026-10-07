@@ -6,6 +6,11 @@ import { PLANS, FREE_DAILY_REPORTS } from './shared/plans.js';
 
 const SITE = 'SiteLens';
 const UPDATED = 'October 7, 2026';
+// Fill these in before launch: they appear in the Terms of Service.
+const LEGAL = {
+  operator: 'SiteLens', // your full name or registered business name
+  jurisdiction: '', // e.g. 'India' or 'the State of Delaware, USA'; blank shows a generic clause
+};
 const DEFAULT_TOPICS = ['General question', 'API plans & sales', 'Account & billing', 'Report a bug', 'Privacy request', 'Partnership'];
 
 const page = (title, lead, ...body) => h('article', { class: 'page' },
@@ -189,7 +194,7 @@ export function privacyView(ctx) {
   ctx.render(page('Privacy policy', `Last updated: ${UPDATED}`,
     h('div', { class: 'callout' }, h('b', null, 'In short: '), `${SITE} doesn’t sell your data, show ads, or use tracking cookies or third-party analytics. We collect only what the service needs to work, and you can ask us to delete it.`),
     section('1. Who we are',
-      p(`This policy explains how ${SITE} (“we”, “us”) handles information when you use our website and API. If you have questions, reach us through our `, contactLink, '.')),
+      p(`This policy explains how ${SITE} (“we”, “us”) handles information when you use our website and API. It should be read with our `, h('a', { href: '#/terms' }, 'Terms of Service'), '. If you have questions, reach us through our ', contactLink, '.')),
     section('2. Information we collect',
       h('h3', null, 'When you analyze a website'),
       ul([
@@ -250,6 +255,81 @@ export function privacyView(ctx) {
       p('Questions or requests about privacy: use our ', contactLink, '.'))));
 }
 
+// ---- Terms of Service -----------------------------------------------------------
+
+export function termsView(ctx) {
+  const contactLink = h('a', { href: '#/contact' }, 'contact form');
+  const [starter, pro, business] = plans();
+  ctx.render(page('Terms of Service', `Last updated: ${UPDATED}`,
+    h('div', { class: 'callout' }, h('b', null, 'In short: '),
+      'use SiteLens fairly, keep your API key private, and remember our traffic numbers are estimates. Paid plans renew monthly until you cancel, and you can cancel anytime.'),
+    section('1. Agreement',
+      p(`These Terms of Service (“Terms”) are an agreement between you and ${LEGAL.operator} (“${SITE}”, “we”, “us”) for your use of the ${SITE} website, reports and API (the “Service”). By using the Service or creating an account, you agree to these Terms and to our `, h('a', { href: '#/privacy' }, 'Privacy policy'), '. If you use the Service for an organization, you confirm you are allowed to accept these Terms for it.'),
+      p('You must be at least 16 years old to use the Service.')),
+    section('2. The Service',
+      p(`${SITE} analyzes publicly available information about websites: their homepages, public files (such as robots.txt and sitemaps), DNS records, TLS certificates, and open data sources (such as the Tranco list, RDAP registries and the Internet Archive). We may add, change or remove features over time.`),
+      p(`The website is free to use within a fair-use allowance (currently ${FREE_DAILY_REPORTS} full reports per visitor per day). API access requires a paid plan.`)),
+    section('3. Accounts',
+      ul([
+        'Give us a valid email address and keep your login details secure. You are responsible for activity on your account.',
+        'Tell us promptly if you think your account or API key has been compromised. You can create a new key at any time, which disables the old one.',
+        'One person or organization per account. Don’t create multiple accounts to get around limits.',
+      ])),
+    section('4. Plans, billing and cancellation',
+      ul([
+        h('span', null, `API plans are monthly subscriptions: ${starter.name} ($${starter.price}), ${pro.name} ($${pro.price}) and ${business.name} ($${business.price}) per month, each with the quotas shown on our `, h('a', { href: '#/pricing' }, 'Pricing page'), '.'),
+        'Payments are processed by Stripe. Prices are in US dollars and may not include taxes, which are added where required.',
+        'Subscriptions renew automatically each month until cancelled. You can upgrade, downgrade or cancel anytime from “Manage billing” on your Account page.',
+        'If you cancel, your plan stays active until the end of the period you have paid for, then ends. Unused analyses do not roll over to the next month.',
+        'If a payment fails, we may pause API access until it succeeds.',
+        'We may change prices with at least 30 days’ notice by email; changes apply from your next billing period, and you can cancel before then.',
+      ])),
+    section('5. Refunds',
+      p('If the Service did not work as described, contact us and we will review your request fairly and individually. Nothing in these Terms limits any refund rights you have under the consumer laws that apply to you.')),
+    section('6. API keys, quotas and fair use',
+      ul([
+        'Keep API keys secret. Don’t publish them in public code or share them outside your organization.',
+        'Each plan has a monthly quota and an hourly limit. Over the limit, the API returns HTTP 429 until the quota resets or you upgrade.',
+        'Don’t try to get around limits, for example by rotating accounts, spoofing headers, or scraping the website instead of using the API.',
+        'Monitors and webhooks must point to systems you own or are authorized to use.',
+      ])),
+    section('7. Acceptable use',
+      p('You agree not to:'),
+      ul([
+        'Use the Service to break any law, or to harass, stalk or harm anyone.',
+        'Use the Service to attack, overload or probe websites or networks you are not authorized to test.',
+        'Interfere with, disrupt, or try to gain unauthorized access to the Service or other users’ accounts.',
+        'Resell or redistribute the Service or its data as a competing product, or present it as your own data source, without our written permission. Using reports and API results inside your own products, analysis and client work is fine.',
+        'Remove credits or notices about the third-party data sources we use.',
+      ])),
+    section('8. Accuracy of data',
+      p('Reports combine live checks with third-party data. Traffic and visit figures are statistical estimates modelled from public rankings, shown with ranges, and may differ significantly from a site’s real traffic. Scores reflect automated checks at the time of analysis. Don’t rely on the Service as your only basis for financial, legal, security or investment decisions.')),
+    section('9. Third-party services and data',
+      p('The Service relies on third parties, including Stripe, our email and hosting providers, and public data sources such as the Tranco list, RDAP registries, the Internet Archive and Team Cymru. Their availability and terms are outside our control, and some data may be subject to their own conditions.')),
+    section('10. Your content',
+      p('You keep ownership of anything you send us, such as contact messages and the domain lists you submit. You give us permission to use it only to provide and improve the Service. Don’t submit anything you don’t have the right to share.')),
+    section('11. Our intellectual property',
+      p(`The Service, including its software, design and branding, belongs to ${LEGAL.operator} or its licensors. These Terms don’t give you any rights to our trademarks. Reports and data you obtain through the Service may be used under these Terms.`)),
+    section('12. Availability and changes',
+      p('We work to keep the Service running, but it is provided without a guaranteed uptime unless we agree otherwise in writing. We may perform maintenance, and may modify or discontinue features. If we discontinue the Service entirely, we will give paid subscribers reasonable notice and a pro-rated refund for any prepaid period.')),
+    section('13. Suspension and termination',
+      p('You can stop using the Service and close your account at any time. We may suspend or close accounts that break these Terms, put the Service or others at risk, or stay unpaid. Where reasonable, we will tell you first and give you a chance to fix the problem.')),
+    section('14. Disclaimers',
+      p('To the extent permitted by law, the Service is provided “as is” and “as available”, without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, accuracy and non-infringement.')),
+    section('15. Limitation of liability',
+      p(`To the extent permitted by law, ${LEGAL.operator} will not be liable for indirect, incidental, special, consequential or punitive damages, or for lost profits, revenue or data. Our total liability for any claim relating to the Service is limited to the amount you paid us in the 12 months before the claim (or US$50 if you have not paid us). Some places don’t allow these limits, so they may not apply to you.`)),
+    section('16. Indemnity',
+      p(`If you misuse the Service or break these Terms, you agree to cover reasonable losses and costs that ${LEGAL.operator} incurs as a result, including from third-party claims.`)),
+    section('17. Changes to these Terms',
+      p('We may update these Terms. If a change is material, we will update the date above and notify account holders by email at least 14 days before it takes effect. Continuing to use the Service after that means you accept the updated Terms.')),
+    section('18. Governing law',
+      p(LEGAL.jurisdiction
+        ? `These Terms are governed by the laws of ${LEGAL.jurisdiction}, and disputes will be handled by its courts, except where your local consumer law gives you the right to bring proceedings where you live.`
+        : `These Terms are governed by the laws of the country where ${LEGAL.operator} is established, except where your local consumer law gives you the right to bring proceedings where you live.`)),
+    section('19. Contact',
+      p('Questions about these Terms? Reach us through our ', contactLink, '.'))));
+}
+
 // ---- Sitemap --------------------------------------------------------------------
 
 export async function sitemapView(ctx) {
@@ -273,6 +353,7 @@ export async function sitemapView(ctx) {
       ['#/contact', 'Contact us', 'Send us a message'],
     ]],
     ['Legal', [
+      ['#/terms', 'Terms of Service', 'The rules for using SiteLens'],
       ['#/privacy', 'Privacy policy', 'How we handle your data'],
       ['#/sitemap', 'Sitemap', 'This page'],
     ]],

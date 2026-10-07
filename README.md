@@ -16,7 +16,7 @@ SiteLens is a self-hostable alternative to traffic-intelligence tools such as Si
 
 Your **last 5 searches** appear as one-click chips and as suggestions in the search and compare boxes, with a Clear button. Reports you've already run are **saved in your browser for 24 hours** (up to 15), so revisiting a site or adding it to a comparison is instant. Re-run forces a fresh check.
 
-The site also has **About us**, **FAQ** (searchable), **Contact us**, **Privacy policy** and **Sitemap** pages, linked from the footer. Contact-form messages are saved to `data/messages.json` and, when email is set up and `SITELENS_CONTACT` is an email address, forwarded to you with Reply going to the sender (5 messages per hour per visitor, with a hidden bot trap). Without the server, the form opens the visitor's email app addressed to `SITELENS_CONTACT`. The privacy policy describes what this code actually stores; review it, and add your business details, before launch.
+The site also has **About us**, **FAQ** (searchable), **Contact us**, **Privacy policy** and **Sitemap** pages, linked from the footer. Contact-form messages are saved to `data/messages.json` and, when email is set up and `SITELENS_CONTACT` is an email address, forwarded to you with Reply going to the sender (5 messages per hour per visitor, with a hidden bot trap). Without the server, the form opens the visitor's email app addressed to `SITELENS_CONTACT`. The privacy policy describes what this code actually stores, and the **Terms of Service** (`#/terms`) cover accounts, billing, refunds, API fair use, acceptable use, data accuracy and liability. Before launch, set your legal name and governing-law country in the `LEGAL` constant at the top of `public/pages.js`, and have both documents reviewed for your country.
 
 There's also a **watchlist** that tells you what changed since your last visit, **rankings** (Tranco top sites plus a leaderboard of every site analyzed on your server), **similar sites** (matched by category, topics, tech stack and outbound links), and a **REST API** (key-protected) with an in-browser playground.
 
@@ -97,7 +97,7 @@ While logged in with an active plan, the website uses their plan instead of the 
 **Setting up Stripe:**
 1. In Stripe, create three recurring monthly **prices**: Starter $15, Pro $50 and Business $199. Copy each price ID (`price_…`).
 2. Add a **webhook endpoint** pointing at `https://YOUR-SERVER/api/v1/billing/webhook` with the events `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated` and `customer.subscription.deleted`. Copy its signing secret (`whsec_…`).
-3. Turn on the **Customer portal** (Stripe → Settings → Billing → Customer portal) and allow plan switching between the three prices.
+3. Turn on the **Customer portal** (Stripe → Settings → Billing → Customer portal). Allow plan switching between the three prices, and set cancellations to happen **at the end of the billing period**, which is what the Terms of Service promise.
 4. Set these on the server: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS`.
 
 Test with Stripe's test mode keys first (`sk_test_…`, card `4242 4242 4242 4242`). Until all five are set, plan buttons fall back to emailing `SITELENS_CONTACT`.

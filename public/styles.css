@@ -316,6 +316,9 @@ pre { background: var(--surface-2); border-radius: 10px; padding: 14px; overflow
 .form-error:empty { display: none; }
 .forgot-link { align-self: flex-end; margin-top: -4px; }
 .forgot-link[hidden] { display: none; }
+.consent { margin: 2px 0 0; text-align: center; }
+.consent[hidden] { display: none; }
+.pricing-terms { text-align: center; margin: 14px auto 0; max-width: 640px; }
 .callout.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); }
 .callout .btn { margin-left: 6px; }
 .account .price b { font-size: 26px; letter-spacing: -0.02em; }

@@ -3,7 +3,7 @@ import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './
 import { API_BASE, CONTACT } from './config.js';
 import { PLANS, FREE_DAILY_REPORTS } from './shared/plans.js';
 import { analyzeLite } from './lite.js';
-import { aboutView, faqView, contactView, privacyView, sitemapView } from './pages.js';
+import { aboutView, faqView, contactView, privacyView, termsView, sitemapView } from './pages.js';
 
 const main = document.getElementById('main');
 
@@ -1160,6 +1160,8 @@ async function pricingView() {
           h('li', { class: 'no' }, 'No API access')),
         h('a', { class: 'btn plan-cta', href: '#/' }, 'Start analyzing')),
       Object.values(PLANS).map(planCard)),
+    h('p', { class: 'muted small pricing-terms' }, 'Plans are billed monthly through Stripe and renew until cancelled. Cancel anytime from your account. By subscribing you agree to our ',
+      h('a', { href: '#/terms' }, 'Terms of Service'), ' and ', h('a', { href: '#/privacy' }, 'Privacy policy'), '.'),
     h('div', { class: 'section grid g2' },
       h('div', { class: 'card' },
         h('h3', null, 'How usage is counted'),
@@ -1330,12 +1332,15 @@ async function loginView(params) {
     submit.textContent = mode === 'signup' ? 'Create account' : 'Log in';
     password.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
     forgot.hidden = mode === 'signup';
+    consent.hidden = mode !== 'signup';
     switchLink.replaceChildren(mode === 'signup' ? 'Already have an account? ' : 'New to SiteLens? ',
       h('a', { href: '#', onclick: (e) => { e.preventDefault(); mode = mode === 'signup' ? 'login' : 'signup'; error.textContent = ''; paint(); } },
         mode === 'signup' ? 'Log in' : 'Create an account'));
   };
   const forgot = h('a', { class: 'small forgot-link', href: '#/forgot' }, 'Forgot password?');
-  const form = h('form', { class: 'auth-form' }, email, password, forgot, error, submit);
+  const consent = h('p', { class: 'muted small consent' }, 'By creating an account you agree to our ',
+    h('a', { href: '#/terms' }, 'Terms of Service'), ' and ', h('a', { href: '#/privacy' }, 'Privacy policy'), '.');
+  const form = h('form', { class: 'auth-form' }, email, password, forgot, error, submit, consent);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     error.textContent = '';
@@ -1518,6 +1523,7 @@ function route() {
     case 'faq': return faqView(pageCtx);
     case 'contact': return contactView(pageCtx, params);
     case 'privacy': return privacyView(pageCtx);
+    case 'terms': return termsView(pageCtx);
     case 'sitemap': return sitemapView(pageCtx);
     default: return render(homeView());
   }
