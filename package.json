@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "tranco": "node scripts/fetch-tranco.js"
+    "tranco": "node scripts/fetch-tranco.js",
+    "build": "node scripts/build-static.js --out _site"
   },
   "engines": {
     "node": ">=20"

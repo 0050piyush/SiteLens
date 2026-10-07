@@ -16,7 +16,7 @@ Webvieu is a self-hostable alternative to traffic-intelligence tools such as Sim
 
 Your **last 5 searches** appear as one-click chips and as suggestions in the search and compare boxes, with a Clear button. Reports you've already run are **saved in your browser for 24 hours** (up to 15), so revisiting a site or adding it to a comparison is instant. Re-run forces a fresh check.
 
-The site also has **About us**, **FAQ** (searchable), **Contact us**, **Privacy policy** and **Sitemap** pages, linked from the footer. Contact-form messages are saved to `data/messages.json` and, when email is set up and `SITELENS_CONTACT` is an email address, forwarded to you with Reply going to the sender (5 messages per hour per visitor, with a hidden bot trap). Without the server, the form opens the visitor's email app addressed to `SITELENS_CONTACT`. The privacy policy describes what this code actually stores, and the **Terms of Service** (`#/terms`) cover accounts, billing, refunds, API fair use, acceptable use, data accuracy and liability. Before launch, set your legal name and governing-law country in the `LEGAL` constant at the top of `public/pages.js`, and have both documents reviewed for your country.
+The site also has **About us**, **FAQ** (searchable), **Contact us**, **Privacy policy** and **Sitemap** pages, linked from the footer. Contact-form messages are saved to `data/messages.json` and, when email is set up and `SITELENS_CONTACT` is an email address, forwarded to you with Reply going to the sender (5 messages per hour per visitor, with a hidden bot trap). Without the server, the form opens the visitor's email app addressed to `SITELENS_CONTACT`. The privacy policy describes what this code actually stores, and the **Terms of Service** (`/terms/`) cover accounts, billing, refunds, API fair use, acceptable use, data accuracy and liability. Before launch, set your legal name and governing-law country in the `LEGAL` constant at the top of `public/pages.js`, and have both documents reviewed for your country.
 
 There's also a **watchlist** that tells you what changed since your last visit, **rankings** (Tranco top sites plus a leaderboard of every site analyzed on your server), **similar sites** (matched by category, topics, tech stack and outbound links), and a **REST API** (key-protected) with an in-browser playground.
 
@@ -176,6 +176,22 @@ curl -H "X-API-Key: YOUR_KEY" "http://localhost:8080/api/v1/compare?domains=gith
 
 Reports are cached for 6 hours, and concurrent requests for the same domain share one analysis.
 
+## SEO and AI search (GEO)
+
+Every page has a real URL (`/pricing/`, `/methodology/`, `/site/github.com/`) and is served as complete HTML, so search engines and AI crawlers that don't run JavaScript (GPTBot, ClaudeBot, PerplexityBot…) read the same content people see. `src/prerender.js` renders the app's own views in Node and adds, for each page:
+
+- a unique `<title>`, meta description, canonical URL, robots rule and Open Graph tags (`public/shared/seo.js`);
+- JSON-LD structured data: Organization, WebSite with a site-search action, WebApplication with the plans as offers, FAQPage, TechArticle (methodology), BreadcrumbList and the analyzed website on report pages;
+- the readable content: home sections, a quotable "What is Webvieu?" answer, the methodology with the traffic formula, the FAQ, and report pages for 52 popular sites with "How much traffic does … get?" answers.
+
+It also generates `sitemap.xml`, `robots.txt` (search and AI crawlers welcome by name) and `llms.txt`, a plain-language summary of the site and its facts for AI assistants. The Node server renders pages on request (`SITELENS_SITE_URL` sets the canonical URL; report pages for sites in its index include their rank, traffic, tech and scores and become indexable). For static hosting, `npm run build -- --site-url https://example.com/` writes the same pages to `_site/`, and the Pages workflow does this on every deploy. Old `#/` links redirect to the clean URLs.
+
+**After deploying:**
+
+1. Add the site in [Google Search Console](https://search.google.com/search-console) (URL-prefix property) and [Bing Webmaster Tools](https://www.bing.com/webmasters). Choose the HTML-tag method and put the code (only the `content` value) in the repository variable `SITELENS_GOOGLE_VERIFICATION` or `SITELENS_BING_VERIFICATION`, then redeploy and verify.
+2. Submit `sitemap.xml` in both. Bing also feeds ChatGPT search and Copilot.
+3. Use a custom domain (for example `webvieu.com`): crawlers only read `robots.txt` and `llms.txt` at the root of a domain, so on `user.github.io/Repo/` they are ignored (the sitemap still works when submitted directly). A domain of your own also builds ranking authority that a subfolder of github.io can't.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -189,6 +205,8 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | `RESEND_API_KEY` or `SENDGRID_API_KEY` | none | Email provider for verification and password-reset emails |
 | `SITELENS_EMAIL_FROM` | none | Sender, e.g. `Webvieu <noreply@yourdomain.com>` (must be verified with the provider) |
 | `SITELENS_ADMIN_TOKEN` | none | Enables `POST /api/v1/admin/grant` for manual payments (16+ characters) |
+| `SITELENS_SITE_URL` | request origin | Public URL of the site, used for canonical links, the sitemap and robots.txt, e.g. `https://webvieu.com/` |
+| `SITELENS_GOOGLE_VERIFICATION` / `SITELENS_BING_VERIFICATION` | none | Search-console verification codes, added as meta tags |
 | `SITELENS_APP_URL` | request origin | Where Stripe sends customers back to, if not the page that started checkout |
 | `SITELENS_PUBLIC_API` | off | Set `1` to make the API open to everyone (anonymous limits apply) |
 | `SITELENS_FREE_PER_DAY` | `10` | Full reports per day per IP for free website visitors |
@@ -220,8 +238,11 @@ src/rank.js        Tranco API and list, traffic model, ZIP reader
 src/external.js    RDAP, Wayback, robots/sitemap/ads.txt/security.txt/llms.txt
 src/classify.js    category classifier and audience signals
 src/store.js       report cache and persistent site index (similar sites, leaderboard)
-public/            single-page frontend (no build step)
+src/prerender.js   server-side HTML for every page: metadata, JSON-LD, sitemap, robots.txt, llms.txt
+src/ssr-dom.js     minimal DOM so the browser views can render in Node
+scripts/build-static.js  prerendered static build for GitHub Pages
+public/            single-page frontend with clean URLs (no build step needed to run it)
 public/lite.js     browser-only analysis used when no API server is reachable
-public/shared/     detection tables and traffic model shared by server and browser
+public/shared/     detection tables, traffic model, routes and SEO metadata shared by server and browser
 test/              node:test suites with a local fixture site
 ```

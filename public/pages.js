@@ -1,8 +1,10 @@
-// Content pages: About, FAQ, Contact, Privacy policy and Sitemap.
+// Content pages: About, Methodology, FAQ, Contact, Privacy policy, Terms and Sitemap.
 // Each view receives `ctx` from app.js: { render, api, hasBackend, contactHref, fmt, CONTACT }.
 
 import { h, ext } from './dom.js';
 import { PLANS, FREE_DAILY_REPORTS, WEBSITE_ONLY_NOTE } from './shared/plans.js';
+import { visitsForRank } from './shared/traffic.js';
+import { POPULAR_DOMAINS } from './shared/seo.js';
 
 const SITE = 'Webvieu';
 const UPDATED = 'October 7, 2026';
@@ -63,9 +65,66 @@ export function aboutView(ctx) {
       h('div', { class: 'report-actions' }, h('a', { class: 'btn primary', href: '#/contact' }, 'Contact us'), h('a', { class: 'btn', href: '#/faq' }, 'Read the FAQ')))));
 }
 
+// ---- Methodology ----------------------------------------------------------------
+
+const nf = new Intl.NumberFormat('en');
+const roughly = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} billion` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} million` : n >= 1e3 ? `${Math.round(n / 1e3)} thousand` : String(Math.round(n)));
+
+export function methodologyView(ctx) {
+  const ranks = [10, 100, 1000, 10000, 100000, 1000000];
+  ctx.render(page('How Webvieu works: methodology', `How we rank websites, estimate their traffic and score them. Last updated: ${UPDATED}.`,
+    section('Summary',
+      ul([
+        'Global rank comes from the Tranco list, a research ranking of the top 1 million websites that combines several popularity sources and averages them over 30 days.',
+        'Monthly visits are estimated from that rank with a power-law model: visits ≈ 8.5 × 10¹⁰ × rank^−1.15. Every estimate is shown with a range of 0.5× to 1.8× and a confidence level.',
+        'Sites outside the top 1 million get no number: we show “< 10K” instead of inventing one.',
+        'Technology, SEO, performance and security data come from a live visit to the website, run when you ask for the report.',
+        'The overall score is 35% performance, 35% SEO and 30% security. Each of those is the weighted share of checks the site passes.',
+      ])),
+    section('Global rank',
+      p('Webvieu uses the ', ext('https://tranco-list.eu', 'Tranco list'), ', a ranking built by researchers for reliability. It combines several independent popularity rankings and averages each site’s position over 30 days, which makes it stable and hard to manipulate. We show a site’s current rank and its rank history over the last 30 days.'),
+      p('Ranks reflect how often a domain is looked up and visited across the internet, so infrastructure domains (CDNs, APIs, ad servers) can rank higher than their human traffic would suggest. Reports flag this where it applies.')),
+    section('Traffic estimates',
+      p('Webvieu turns rank into an estimate of monthly visits with a power-law model fitted to publicly reported figures for well-known websites:'),
+      h('p', { class: 'formula' }, h('code', null, 'monthly visits ≈ 8.5 × 10¹⁰ × rank^−1.15')),
+      p('Daily visits are the monthly estimate divided by 30.4. Because one rank can match very different real numbers, we always show a range from half to 1.8 times the estimate. Some examples:'),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'vs-table' },
+        h('thead', null, h('tr', null, h('th', null, 'Global rank'), h('th', null, 'Estimated monthly visits'), h('th', null, 'Range'), h('th', null, 'Confidence'))),
+        h('tbody', null, ranks.map((r) => {
+          const v = visitsForRank(r);
+          const conf = r <= 10000 ? 'Medium' : r <= 200000 ? 'Low' : 'Very low';
+          return h('tr', null, h('td', null, `#${nf.format(r)}`), h('td', null, `≈ ${roughly(v)}`), h('td', null, `${roughly(v * 0.5)} – ${roughly(v * 1.8)}`), h('td', null, conf));
+        })))),
+      p('Confidence is medium for the top 10,000 sites, low up to rank 200,000 and very low beyond that, because small differences in rank matter less and less in the long tail. The estimates are best used to compare sites and follow trends, not as exact figures.')),
+    section('Technology detection',
+      p('Webvieu recognises more than 180 technologies, including content management systems, JavaScript frameworks, analytics and tag managers, advertising pixels, CDNs, payment providers, consent tools and hosting platforms. Each one has a fingerprint: patterns in the page’s HTML, script and style URLs, meta tags, cookies, HTTP headers or DNS records. A technology is only listed when its fingerprint matches.'),
+      p('DNS records also reveal the email provider, email-sending services and SaaS tools a domain has verified (for example search consoles and workspace tools).')),
+    section('Scores',
+      p('Every report includes three audits, each scored from 0 to 100 as the weighted share of checks passed. Some checks give partial credit, and checks that don’t apply are skipped.'),
+      ul([
+        h('span', null, h('b', null, 'Performance (35% of the overall score): '), 'server response time (the most important check), redirects, compression, HTML size, HTTP/2, render-blocking scripts, script count, third-party origins, lazy-loaded images, caching and resource hints.'),
+        h('span', null, h('b', null, 'SEO (35%): '), 'status code, indexability, title and meta description length, a single H1, canonical URL, language, mobile viewport, Open Graph and social cards, structured data, image alt text, amount of text, robots.txt, XML sitemap, favicon, HTTPS, internal links, hreflang and web app manifest.'),
+        h('span', null, h('b', null, 'Security (30%): '), 'HTTPS and redirects, a valid and current certificate, TLS 1.3, HSTS, Content-Security-Policy and other security headers, SPF and DMARC email protection, CAA records and security.txt.'),
+      ]),
+      p('The report lists every check with its result and the evidence we found, so you can see exactly why a site scored the way it did.')),
+    section('Freshness',
+      p('Reports are generated live when you ask for them. Results are cached for up to 6 hours so repeat visits are fast, and you can re-run any report. The Tranco rank list is refreshed daily.')),
+    section('What we don’t measure',
+      ul([
+        'Traffic sources, referrals, search keywords and visitor demographics. These need clickstream panels that track people’s browsing, which we don’t buy or use.',
+        'Exact visit counts. Only the site owner’s own analytics can provide those.',
+        'Pages beyond the homepage and the site’s public files (robots.txt, sitemap, ads.txt, security.txt).',
+      ])),
+    section('Data sources',
+      p('Rank: the Tranco list. Registration details: RDAP registries. History: the Internet Archive. Network ownership: Team Cymru. Everything else comes from the website itself. ', WEBSITE_ONLY_NOTE)),
+    h('div', { class: 'card page-cta' },
+      h('div', null, h('h3', null, 'See it in action'), h('p', { class: 'muted small', style: { margin: '4px 0 0' } }, 'Open a report and check the numbers yourself.')),
+      h('div', { class: 'report-actions' }, h('a', { class: 'btn primary', href: '#/site/github.com' }, 'github.com report'), h('a', { class: 'btn', href: '#/faq' }, 'Read the FAQ')))));
+}
+
 // ---- FAQ ------------------------------------------------------------------------
 
-function faqItems() {
+export function faqItems() {
   const [starter] = plans();
   return [
     ['General', [
@@ -351,7 +410,8 @@ export async function sitemapView(ctx) {
       ['#/forgot', 'Forgot password', 'Get a reset link by email'],
     ] : []],
     ['Company', [
-      ['#/about', 'About us', 'What Webvieu is and how it works'],
+      ['#/about', 'About us', 'What Webvieu is and why we built it'],
+      ['#/methodology', 'How it works', 'How we rank sites, estimate traffic and score them'],
       ['#/faq', 'FAQ', 'Answers about reports, plans and data'],
       ['#/contact', 'Contact us', 'Send us a message'],
     ]],
@@ -360,7 +420,7 @@ export async function sitemapView(ctx) {
       ['#/privacy', 'Privacy policy', 'How we handle your data'],
       ['#/sitemap', 'Sitemap', 'This page'],
     ]],
-    ['Popular reports', ['github.com', 'wikipedia.org', 'stripe.com', 'nytimes.com', 'shopify.com', 'vercel.com'].map((d) => [`#/site/${d}`, d, 'Sample report'])],
+    ['Popular reports', POPULAR_DOMAINS.map((d) => [`#/site/${d}`, d, 'Traffic, rank & tech stack'])],
   ].map(([t, links]) => [t, links.filter(Boolean)]).filter(([, links]) => links.length);
 
   ctx.render(page('Sitemap', 'Every page on Webvieu in one place.',

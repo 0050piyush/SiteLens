@@ -19,6 +19,8 @@ import {
 import { timingSafeEqual } from 'node:crypto';
 import { emailEnabled, sendEmail, verificationEmail, resetEmail, contactEmail } from './src/mailer.js';
 import { Messages } from './src/messages.js';
+import { renderPage, renderSitemap, renderRobots, renderLlms } from './src/prerender.js';
+import { parsePath } from './public/shared/routes.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -259,23 +261,52 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+const PAGE_HEADERS = {
+  'cache-control': 'no-cache', // always revalidate so deploys show up immediately
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'content-security-policy': "default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'",
+};
+
 function serveStatic(req, res, pathname) {
   let rel;
   try { rel = decodeURIComponent(pathname); } catch { return send(res, 400, { error: 'Bad path' }); }
-  if (rel === '/' || !path.extname(rel)) rel = '/index.html'; // SPA fallback
+  if (!path.extname(rel)) { // not a file: the 404 page
+    servePage(req, res, pathname, '').catch((err) => { console.error(err); if (!res.headersSent) send(res, 500, { error: 'Internal error' }); });
+    return;
+  }
   const file = path.normalize(path.join(PUBLIC, rel));
-  if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, { error: 'Forbidden' });
+  if (!file.startsWith(PUBLIC + path.sep) || path.basename(file) === 'index.html') return send(res, 404, { error: 'Not found' });
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, { error: 'Not found' });
-    res.writeHead(200, {
-      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-      'cache-control': 'no-cache', // always revalidate so deploys show up immediately
-      'x-content-type-options': 'nosniff',
-      'referrer-policy': 'strict-origin-when-cross-origin',
-      'content-security-policy': "default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'",
-    });
-    res.end(data);
+    res.writeHead(200, { ...PAGE_HEADERS, 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+    res.end(req.method === 'HEAD' ? undefined : data);
   });
+}
+
+// The public URL of the site, for canonical links and the sitemap.
+// Set SITELENS_SITE_URL in production (e.g. https://webvieu.com/).
+function siteUrlFor(req) {
+  if (process.env.SITELENS_SITE_URL) return process.env.SITELENS_SITE_URL.replace(/\/?$/, '/');
+  const host = /^[a-z0-9.:[\]-]+$/i.test(req.headers.host || '') ? req.headers.host : 'localhost';
+  const proto = req.headers['x-forwarded-proto'] === 'https' || req.socket.encrypted ? 'https' : 'http';
+  return `${proto}://${host}/`;
+}
+
+/** Server-rendered pages: real HTML with metadata and content, then the app takes over. */
+async function servePage(req, res, pathname, search) {
+  const r = await renderPage(pathname.slice(1), { siteUrl: siteUrlFor(req), backend: true, index });
+  if (r.redirect) {
+    res.writeHead(301, { location: r.redirect + search });
+    return res.end();
+  }
+  res.writeHead(r.status, { ...PAGE_HEADERS, 'content-type': 'text/html; charset=utf-8' });
+  res.end(req.method === 'HEAD' ? undefined : r.html);
+}
+
+function sendTextFile(req, res, type, body) {
+  res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' });
+  res.end(req.method === 'HEAD' ? undefined : body);
 }
 
 // ---- routes ----------------------------------------------------------------
@@ -828,6 +859,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed' });
+  try {
+    if (pathname === '/robots.txt') return sendTextFile(req, res, 'text/plain; charset=utf-8', renderRobots({ siteUrl: siteUrlFor(req), backend: true }));
+    if (pathname === '/llms.txt') return sendTextFile(req, res, 'text/plain; charset=utf-8', renderLlms({ siteUrl: siteUrlFor(req), backend: true }));
+    if (pathname === '/sitemap.xml') return sendTextFile(req, res, 'application/xml; charset=utf-8', renderSitemap({ siteUrl: siteUrlFor(req), backend: true, index }));
+    if (parsePath(pathname.slice(1))) return await servePage(req, res, pathname, url.search);
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) return send(res, 500, { error: 'Internal error' });
+    return;
+  }
   serveStatic(req, res, pathname);
 });
 

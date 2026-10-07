@@ -110,8 +110,13 @@ before(async () => {
   });
 });
 
-after(() => {
-  server?.kill();
+after(async () => {
+  // Wait for the server to finish saving its data before deleting the folder.
+  if (server && server.exitCode === null) {
+    const exited = new Promise((resolve) => server.once('exit', resolve));
+    server.kill();
+    await exited;
+  }
   site?.close();
   hookServer?.close();
   stripeServer?.close();
@@ -178,7 +183,8 @@ test('static files, SPA fallback and traversal protection', async () => {
   const index = await get('/');
   assert.match(index.headers.get('content-type'), /text\/html/);
   assert.match(index.headers.get('content-security-policy'), /default-src 'self'/);
-  assert.equal((await get('/site/whatever')).status, 200);
+  assert.equal((await get('/site/example.com')).status, 200, 'report pages follow the redirect to /site/example.com/');
+  assert.equal((await get('/site/not_a_domain/')).status, 404);
   assert.equal((await get('/%E0%A4%A')).status, 400);
   assert.equal((await get('/api/v1/analyze/%E0%A4%A')).status, 400);
   assert.equal((await get('/api/v1/status')).status, 200, 'server survived malformed paths');
@@ -187,6 +193,29 @@ test('static files, SPA fallback and traversal protection', async () => {
     assert.notEqual(r.status, 200, p);
     assert.doesNotMatch(String(r.body), /createServer|"scripts"/);
   }
+});
+
+test('server-rendered pages and crawler files', async () => {
+  const about = await get('/about/');
+  assert.equal(about.status, 200);
+  assert.match(about.body, /<title>About Webvieu/);
+  assert.match(about.body, /<link rel="canonical" href="http:\/\/127\.0\.0\.1:\d+\/about\/">/);
+  assert.match(about.body, /<h1>About Webvieu<\/h1>/, 'content is in the HTML, not only rendered by JavaScript');
+  const noSlash = await fetch(`http://127.0.0.1:${apiPort}/pricing?x=1`, { redirect: 'manual' });
+  assert.equal(noSlash.status, 301);
+  assert.equal(noSlash.headers.get('location'), '/pricing/?x=1');
+  const missing = await get('/no-such-page/');
+  assert.equal(missing.status, 404);
+  assert.match(missing.body, /noindex/);
+  assert.equal((await get('/rankings/')).status, 200);
+  assert.equal((await get('/index.html')).status, 404, 'no duplicate of the home page');
+  const robots = await get('/robots.txt');
+  assert.match(robots.headers.get('content-type'), /text\/plain/);
+  assert.match(robots.body, /Sitemap: http:\/\/127\.0\.0\.1:\d+\/sitemap\.xml/);
+  const sitemap = await get('/sitemap.xml');
+  assert.match(sitemap.headers.get('content-type'), /xml/);
+  assert.match(sitemap.body, /<loc>http:\/\/127\.0\.0\.1:\d+\/api-docs\/<\/loc>/);
+  assert.match((await get('/llms.txt')).body, /^# Webvieu/);
 });
 
 test('API requires a key except for the site itself', async () => {

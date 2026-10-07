@@ -1,9 +1,12 @@
-import { h, safeUrl, ext } from './dom.js';
+import { h, safeUrl, ext, appHref, siteRoot } from './dom.js';
+import { parsePath } from './shared/routes.js';
+import { seoFor } from './shared/seo.js';
 import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './charts.js';
 import { API_BASE, CONTACT } from './config.js';
 import { PLANS, FREE_DAILY_REPORTS, WEBSITE_ONLY_DATA, WEBSITE_ONLY_NOTE } from './shared/plans.js';
 import { analyzeLite } from './lite.js';
-import { aboutView, faqView, contactView, privacyView, termsView, sitemapView } from './pages.js';
+import { HOME_LEAD, exampleChips, featuresSection, whatIsSection, comparisonSection, popularSection } from './home-content.js';
+import { aboutView, methodologyView, faqView, contactView, privacyView, termsView, sitemapView } from './pages.js';
 
 const main = document.getElementById('main');
 
@@ -218,7 +221,7 @@ function searchForm({ big = false } = {}) {
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const d = cleanDomain(input.value);
-    if (d) location.hash = `#/site/${d}`;
+    if (d) go(`#/site/${d}`);
   });
   return form;
 }
@@ -246,54 +249,27 @@ const isLimit = (err) => err?.status === 429 && err.body?.upgrade;
 
 // ---- views -------------------------------------------------------------------
 
-const FEATURES = [
-  ['M3 17l5-5 4 4 8-8', 'Traffic & rank', 'Global rank from the Tranco research list, 30-day rank history and a transparent traffic model with ranges, not fake precision.'],
-  ['M4 6h16M4 12h16M4 18h10', 'Technology stack', '180+ fingerprints: CMS, frameworks, analytics, ad pixels, CDNs, payments, consent tools, hosting and more.'],
-  ['M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z', 'Security grade', 'TLS certificate, HSTS, CSP and other headers, SPF/DMARC email security, CAA and security.txt.'],
-  ['M5 12h4l2-6 2 12 2-6h4', 'Performance', 'Real server timings (DNS, connect, TLS, TTFB), compression, HTTP/2, page weight and render-blocking scripts.'],
-  ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5', 'SEO audit', '20 on-page checks plus robots.txt, sitemaps, structured data, hreflang and which AI crawlers are blocked.'],
-  ['M4 7h16v10H4zM8 11h8', 'Business signals', 'Email provider, SaaS tools verified on the domain (via DNS), email senders, ad sellers, socials and domain age.'],
-];
-
 function homeView() {
   const recentBox = h('div', { class: 'site-tiles' }, h('div', { class: 'muted small' }, 'Loading…'));
   const recentSection = h('section', { class: 'section' },
     h('div', { class: 'card-head' }, h('h2', null, 'Recently analyzed on this server'), h('a', { href: '#/top' }, 'See rankings →')),
     recentBox);
   const watch = watchlist();
-  const lead = h('p', { class: 'lead' }, 'Traffic estimates, global rank, tech stack, SEO, performance and security for any domain. Free, no sign-up.');
   const view = h('div', null,
     h('section', { class: 'hero' },
       h('h1', null, 'See ', h('span', { class: 'hl' }, 'any website'), ' clearly.'),
-      lead,
+      h('p', { class: 'lead' }, HOME_LEAD),
       searchForm({ big: true }),
-      h('div', { class: 'chips examples' },
-        h('span', { class: 'muted small', style: { alignSelf: 'center' } }, 'Try:'),
-        ['github.com', 'wikipedia.org', 'stripe.com', 'nytimes.com', 'shopify.com', 'vercel.com'].map((d) =>
-          h('a', { class: 'chip', href: `#/site/${d}` }, d))),
+      exampleChips(),
       recentSearchesRow()),
     watch.length ? h('section', { class: 'section' },
       h('h2', null, 'Your watchlist'),
       h('div', { class: 'site-tiles' }, watch.map((w) => siteTile(w)))) : null,
     recentSection,
-    h('section', { class: 'section grid g3 features' },
-      FEATURES.map(([d, t, p]) => h('div', { class: 'card feature' },
-        h('div', { class: 'ico' }, svgIcon(d)), h('h3', null, t), h('p', null, p)))),
-    h('section', { class: 'section card' },
-      h('div', { class: 'card-head' }, h('div', null, h('h2', null, 'How Webvieu compares'),
-        h('p', { class: 'muted small' }, 'An honest comparison with typical paid traffic-intelligence tools.'))),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'vs-table' },
-        h('thead', null, h('tr', null, h('th', null, 'Feature'), h('th', null, 'Webvieu'), h('th', null, 'Typical paid tools'))),
-        h('tbody', null, [
-          ['Full report without an account', true, 'Limited preview'],
-          ['REST API for your own apps', 'From $15/month', 'Sales-only, annual contracts'],
-          ['Technology stack detection', true, 'Separate product / add-on'],
-          ['Security, SEO and performance audits', true, false],
-          ['SaaS tools & email providers (DNS)', true, false],
-          ['Compare up to 5 sites', true, 'Paid'],
-          ['Methodology published', true, false],
-          ['Clickstream traffic sources & demographics', false, true],
-        ].map(([f, a, b]) => h('tr', null, h('td', null, f), cell(a), cell(b))))))));
+    featuresSection(),
+    whatIsSection(),
+    comparisonSection(),
+    popularSection());
 
   hasBackend().then((ok) => {
     if (!ok) { recentSection.remove(); return null; }
@@ -304,30 +280,6 @@ function homeView() {
     recentBox.replaceChildren(...(sites.length ? sites.map(siteTile) : [h('div', { class: 'muted small' }, 'Nothing analyzed yet. Be the first: search above.')]));
   }).catch(() => recentBox.replaceChildren(h('div', { class: 'muted small' }, 'Could not load recent sites.')));
   return view;
-}
-
-function cell(v) {
-  if (v === true) return h('td', { class: 'yes' }, '✓ Yes');
-  if (v === false) return h('td', { class: 'no' }, '—');
-  return h('td', null, v);
-}
-
-function svgIcon(d) {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('width', '20');
-  svg.setAttribute('height', '20');
-  svg.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(NS, 'path');
-  p.setAttribute('d', d);
-  p.setAttribute('fill', 'none');
-  p.setAttribute('stroke', 'currentColor');
-  p.setAttribute('stroke-width', '2');
-  p.setAttribute('stroke-linecap', 'round');
-  p.setAttribute('stroke-linejoin', 'round');
-  svg.append(p);
-  return svg;
 }
 
 // ---- site report ---------------------------------------------------------------
@@ -371,7 +323,7 @@ async function siteView(domain, fresh = false) {
   if (currentRoute !== `site:${domain}`) return;
   if (!r.reachable) return render(errorView(`Couldn't reach ${r.host || domain}`, r.error || 'The site did not respond.', () => siteView(domain, true)));
   addSearch(domain);
-  document.title = `${r.domain} · Webvieu`;
+  document.title = seoFor('site', r.domain).title;
   render(r.mode === 'lite' ? liteReportView(r, cachedAt) : reportView(r, cachedAt));
 }
 
@@ -838,7 +790,7 @@ async function compareView(list) {
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const ds = inputs.map((i) => cleanDomain(i.value)).filter(Boolean);
-    if (ds.length) location.hash = `#/compare/${ds.join(',')}`;
+    if (ds.length) go(`#/compare/${ds.join(',')}`);
   });
   const results = h('div');
   render(h('div', null,
@@ -963,7 +915,7 @@ function compareResults(data) {
 async function topView(tab = 'global') {
   const tabs = h('div', { class: 'chart-tabs', role: 'tablist' },
     [['global', 'Global top sites'], ['index', 'Analyzed leaderboard']].map(([id, label]) =>
-      h('button', { type: 'button', role: 'tab', 'aria-selected': String(id === tab), onclick: () => { location.hash = `#/top/${id}`; } }, label)));
+      h('button', { type: 'button', role: 'tab', 'aria-selected': String(id === tab), onclick: () => { go(`#/top/${id}`); } }, label)));
   const body = h('div', { class: 'section' }, h('div', { class: 'muted' }, 'Loading…'));
   render(h('div', null,
     h('div', { class: 'card-head' }, h('div', null, h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'Rankings'),
@@ -1239,20 +1191,20 @@ function featureMatrix() {
 
 // ---- accounts ----------------------------------------------------------------------
 
-const returnTo = () => location.href.split('#')[0];
+const returnTo = () => location.origin + siteRoot();
 
 async function buyPlan(planId, btn) {
-  if (!session.get()) { location.hash = `#/login?next=buy:${planId}`; return; }
+  if (!session.get()) { go(`#/login?next=buy:${planId}`); return; }
   if (btn) { btn.disabled = true; btn.textContent = 'Opening checkout…'; }
   try {
     const { url } = await api('/api/v1/billing/checkout', { method: 'POST', body: { plan: planId, returnTo: returnTo() } });
     location.href = url;
   } catch (err) {
-    if (err.status === 401) { location.hash = `#/login?next=buy:${planId}`; return; }
+    if (err.status === 401) { go(`#/login?next=buy:${planId}`); return; }
     if (err.body?.code === 'verify_email') {
       // Remember the plan so the confirmation page can continue to checkout.
       store.set('sitelens-pending-plan', planId);
-      location.hash = '#/account?verify=needed';
+      go('#/account?verify=needed');
       return;
     }
     if (btn) { btn.disabled = false; btn.textContent = `Get ${PLANS[planId].name}`; }
@@ -1310,7 +1262,7 @@ async function resetView(params) {
     try {
       const res = await api('/api/v1/auth/reset', { method: 'POST', body: { token, password: pw.value } });
       session.set(res.token);
-      location.hash = '#/account?password=updated';
+      go('#/account?password=updated');
     } catch (err) {
       msg.textContent = err.message;
       submit.disabled = false;
@@ -1379,7 +1331,7 @@ async function loginView(params) {
       session.set(res.token);
       const buy = /^buy:(starter|pro|business)$/.exec(next)?.[1];
       if (buy) return buyPlan(buy);
-      location.hash = '#/account';
+      go('#/account');
     } catch (err) {
       error.textContent = err.message;
       submit.disabled = false;
@@ -1397,13 +1349,13 @@ async function loginView(params) {
 }
 
 async function accountView(params) {
-  if (!session.get()) { location.hash = '#/login'; return; }
+  if (!session.get()) { go('#/login'); return; }
   render(h('div', { class: 'loading' }, h('p', { class: 'muted' }, 'Loading your account…')));
   let acct;
   try {
     acct = await api('/api/v1/account');
   } catch (err) {
-    if (err.status === 401) { location.hash = '#/login'; return; }
+    if (err.status === 401) { go('#/login'); return; }
     return render(errorView('Could not load your account', err.message, () => accountView(params)));
   }
   const justPaid = params.get('checkout') === 'success';
@@ -1450,7 +1402,7 @@ async function accountView(params) {
   const logout = async () => {
     try { await api('/api/v1/auth/logout', { method: 'POST', body: {} }); } catch { /* ignore */ }
     session.clear();
-    location.hash = '#/';
+    go('#/');
   };
 
   let verifyBanner = null;
@@ -1526,22 +1478,66 @@ function render(node) {
   main.replaceChildren(node);
 }
 
+/** Navigates to an app page ("#/site/x" or "/site/x") without reloading. */
+function go(href, { replace = false } = {}) {
+  history[replace ? 'replaceState' : 'pushState'](null, '', appHref(href));
+  route();
+}
+
+function setMeta(selector, attr, value) {
+  const el = document.head.querySelector(selector);
+  if (el) el.setAttribute(attr, value);
+}
+
+// The first page load arrives with server-rendered tags; later navigations update them.
+let firstLoad = true;
+function applySeo(view, arg) {
+  const meta = seoFor(view, arg);
+  document.title = meta.title;
+  if (firstLoad) return;
+  const url = location.origin + location.pathname;
+  setMeta('meta[name="description"]', 'content', meta.description);
+  setMeta('meta[name="robots"]', 'content', meta.robots);
+  setMeta('link[rel="canonical"]', 'href', url);
+  setMeta('meta[property="og:title"]', 'content', meta.title);
+  setMeta('meta[property="og:description"]', 'content', meta.description);
+  setMeta('meta[property="og:url"]', 'content', url);
+}
+
+function notFoundView() {
+  render(h('div', { class: 'loading' }, h('h2', null, 'Page not found'),
+    h('p', { class: 'muted' }, 'This page doesn’t exist. Try analyzing a website instead.'),
+    searchForm(),
+    h('p', null, h('a', { href: '#/' }, '← Back home'))));
+}
+
 function route() {
-  const hash = location.hash || '#/';
-  if (!hash.startsWith('#/')) return; // in-page anchors (skip link, section nav)
-  const [path, query = ''] = hash.split('?');
-  const params = new URLSearchParams(query);
-  const [, view, arg = ''] = path.match(/^#\/([^/]*)\/?(.*)$/) || [];
-  document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#/${view}`));
-  document.title = 'Webvieu · See any website clearly';
+  // Old "#/view" links (bookmarks, emails, payment returns) move to the clean URL.
+  if (location.hash.startsWith('#/')) {
+    history.replaceState(null, '', appHref(location.hash));
+    firstLoad = false;
+  }
+  const root = siteRoot();
+  const parsed = location.pathname.startsWith(root) ? parsePath(location.pathname.slice(root.length)) : null;
+  const { view, arg } = parsed || { view: null, arg: '' };
+  const params = new URLSearchParams(location.search);
+  let decoded = arg;
+  try { decoded = decodeURIComponent(arg); } catch { /* keep raw */ }
+  if (view === 'site') decoded = cleanDomain(decoded);
+  document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', !!view && a.getAttribute('href') === appHref(`#/${view}`)));
+  applySeo(view, decoded);
+  firstLoad = false;
   window.scrollTo(0, 0);
-  const decoded = decodeURIComponent(arg);
-  currentRoute = `${view}:${view === 'site' ? cleanDomain(decoded) : decoded}`;
+  currentRoute = `${view}:${decoded}`;
   switch (view) {
-    case 'site': return decoded ? siteView(cleanDomain(decoded)) : render(homeView());
+    case '': {
+      const q = cleanDomain(params.get('q')); // the search box also works without JavaScript
+      return q ? go(`#/site/${q}`, { replace: true }) : render(homeView());
+    }
+    case 'site': return decoded ? siteView(decoded) : render(homeView());
     case 'compare': return compareView(decoded ? decoded.split(',') : []);
-    case 'top': return topView(decoded || 'global');
-    case 'api': return apiView();
+    case 'rankings': return topView(decoded || 'global');
+    case 'api-docs': return apiView();
     case 'pricing': return pricingView();
     case 'login': return loginView(params);
     case 'account': return accountView(params);
@@ -1549,20 +1545,38 @@ function route() {
     case 'reset': return resetView(params);
     case 'verify': return verifyView(params);
     case 'about': return aboutView(pageCtx);
+    case 'methodology': return methodologyView(pageCtx);
     case 'faq': return faqView(pageCtx);
     case 'contact': return contactView(pageCtx, params);
     case 'privacy': return privacyView(pageCtx);
     case 'terms': return termsView(pageCtx);
     case 'sitemap': return sitemapView(pageCtx);
-    default: return render(homeView());
+    default: return notFoundView();
   }
 }
+
+// Same-site links to app pages navigate in place instead of reloading.
+document.addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest?.('a[href]');
+  if (!a || a.target || a.hasAttribute('download')) return;
+  const url = new URL(a.href, location.href);
+  const root = siteRoot();
+  if (url.origin !== location.origin || !url.pathname.startsWith(root)) return;
+  if (url.hash && url.pathname === location.pathname && url.search === location.search) return; // in-page anchor
+  if (!parsePath(url.pathname.slice(root.length))) return; // a file or an API URL, not a page
+  e.preventDefault();
+  if (url.pathname + url.search !== location.pathname + location.search) history.pushState(null, '', url.pathname + url.search);
+  route();
+});
+window.addEventListener('popstate', route);
+window.addEventListener('hashchange', () => { if (location.hash.startsWith('#/')) route(); });
 
 document.getElementById('topsearch').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = e.target.elements.q;
   const d = cleanDomain(input.value);
-  if (d) { location.hash = `#/site/${d}`; input.value = ''; input.blur(); }
+  if (d) { go(`#/site/${d}`); input.value = ''; input.blur(); }
 });
 document.getElementById('theme-toggle').addEventListener('click', () => {
   const root = document.documentElement;
@@ -1578,10 +1592,9 @@ function refreshNav() {
   if (!link) return;
   const loggedIn = !!session.get();
   link.textContent = loggedIn ? 'Account' : 'Log in';
-  link.setAttribute('href', loggedIn ? '#/account' : '#/login');
+  link.setAttribute('href', appHref(loggedIn ? '#/account' : '#/login'));
 }
 
-window.addEventListener('hashchange', route);
 const yearEl = document.getElementById('year');
 if (yearEl) yearEl.textContent = String(new Date().getFullYear());
 refreshNav();

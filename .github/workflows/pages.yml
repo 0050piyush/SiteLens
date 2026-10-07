@@ -41,28 +41,28 @@ jobs:
           fi
           printf "export const API_BASE = '%s';\nexport const CONTACT = '%s';\n" "${API_URL%/}" "$CONTACT" > public/config.js
           echo "API: ${API_URL:-none (lite mode)} · contact: ${CONTACT:-none}"
-          touch public/.nojekyll
 
-      # Give every deploy fresh asset URLs so browsers (phone Safari in
-      # particular) never mix a new page with cached old scripts.
-      - name: Version asset URLs
-        run: |
-          V="${GITHUB_SHA::8}"
-          sed -i -E "s#(href|src)=\"(styles\.css|theme\.js|app\.js|favicon\.svg|apple-touch-icon\.png|og-image\.png)\"#\1=\"\2?v=$V\"#g" public/index.html
-          find public -name '*.js' -exec sed -i -E "s#(from '\.{1,2}/[^'?]+\.js)'#\1?v=$V'#g" {} +
-          grep -c "?v=$V" public/index.html
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - id: pages
         uses: actions/configure-pages@v5
 
-      # Link previews (WhatsApp, X, Slack…) need an absolute image URL.
-      - name: Absolute preview image URL
+      # Prerender every page as real HTML (titles, descriptions, structured
+      # data and content for search engines and AI crawlers), plus
+      # sitemap.xml, robots.txt and llms.txt. Asset URLs get the commit hash
+      # so browsers never mix a new page with cached old scripts.
+      # Optional variables for search consoles (verification codes only):
+      #   SITELENS_GOOGLE_VERIFICATION, SITELENS_BING_VERIFICATION
+      - name: Build static site
         env:
-          BASE: ${{ steps.pages.outputs.base_url }}
-        run: sed -i -E "s#content=\"og-image\.png(\?v=[0-9a-f]+)?\"#content=\"${BASE%/}/og-image.png\1\"#" public/index.html
+          SITELENS_GOOGLE_VERIFICATION: ${{ vars.SITELENS_GOOGLE_VERIFICATION }}
+          SITELENS_BING_VERIFICATION: ${{ vars.SITELENS_BING_VERIFICATION }}
+        run: node scripts/build-static.js --out _site --site-url "${{ steps.pages.outputs.base_url }}" --version "${GITHUB_SHA::8}"
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

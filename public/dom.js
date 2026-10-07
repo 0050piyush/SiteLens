@@ -1,5 +1,16 @@
 // DOM helpers shared by the app's modules. All text goes through textContent.
 
+import { toPath } from './shared/routes.js';
+
+// The site's root path ("/" on a custom domain, "/SiteLens/" on GitHub Pages),
+// worked out from where this file is served. The prerenderer sets it explicitly.
+let ROOT = '/';
+try { ROOT = new URL('./', import.meta.url).pathname; } catch { /* keep "/" */ }
+export const setRoot = (r) => { ROOT = r; };
+export const siteRoot = () => ROOT;
+/** App link ("#/pricing", "/site/x") → real URL path ("/SiteLens/pricing/"). */
+export const appHref = (href) => ROOT + toPath(href);
+
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   if (attrs) {
@@ -8,7 +19,7 @@ export function h(tag, attrs, ...children) {
       if (k === 'class') el.className = v;
       else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
       else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
-      else if (k === 'href' || k === 'src') { const u = safeUrl(v); if (u) el.setAttribute(k, u); }
+      else if (k === 'href' || k === 'src') { const u = safeUrl(k === 'href' && String(v).startsWith('#/') ? appHref(v) : v); if (u) el.setAttribute(k, u); }
       else el.setAttribute(k, v === true ? '' : v);
     }
   }
