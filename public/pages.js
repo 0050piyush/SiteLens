@@ -4,11 +4,11 @@
 import { h, ext } from './dom.js';
 import { PLANS, FREE_DAILY_REPORTS, WEBSITE_ONLY_NOTE } from './shared/plans.js';
 
-const SITE = 'SiteLens';
+const SITE = 'Webvieu';
 const UPDATED = 'October 7, 2026';
 // Fill these in before launch: they appear in the Terms of Service.
 const LEGAL = {
-  operator: 'SiteLens', // your full name or registered business name
+  operator: 'Webvieu', // your full name or registered business name
   jurisdiction: '', // e.g. 'India' or 'the State of Delaware, USA'; blank shows a generic clause
 };
 const DEFAULT_TOPICS = ['General question', 'API plans & sales', 'Account & billing', 'Report a bug', 'Privacy request', 'Partnership'];
@@ -30,7 +30,7 @@ export function aboutView(ctx) {
       p('Knowing how a website is built, how popular it is and how healthy it looks shouldn’t require a sales call and a five-figure contract. ',
         `${SITE} gives anyone a clear picture of any website in seconds, and gives developers an affordable API to build on.`),
       p('We also believe estimates should look like estimates. Where we model a number, such as monthly visits, we show a range, a confidence level and the formula, instead of false precision.')),
-    section('What SiteLens does',
+    section('What Webvieu does',
       h('div', { class: 'grid g2 about-grid' },
         [
           ['Traffic & popularity', 'Global rank from the Tranco research list, 30-day rank history, and modelled monthly visits with a low–high range.'],
@@ -38,7 +38,7 @@ export function aboutView(ctx) {
           ['Health audits', 'Live performance timings plus SEO and security checks, each graded with every check explained.'],
           ['Business signals', 'Email and DNS providers, SaaS tools verified on the domain, ad sellers, social profiles and domain history.'],
           ['Compare & monitor', 'Put up to five sites side by side, watch sites for changes, and get alerts by webhook.'],
-          ['Open API', `SiteLens’s own live analysis as JSON, with bulk analysis and monitoring, from $${plans()[0].price}/month. Rank and traffic estimates stay on the free website.`],
+          ['Open API', `Webvieu’s own live analysis as JSON, with bulk analysis and monitoring, from $${plans()[0].price}/month. Rank and traffic estimates stay on the free website.`],
         ].map(([t, d]) => h('div', { class: 'card' }, h('h3', null, t), h('p', { class: 'muted small', style: { margin: '6px 0 0' } }, d))))),
     section('How it works',
       h('ol', { class: 'steps-list' },
@@ -69,17 +69,17 @@ function faqItems() {
   const [starter] = plans();
   return [
     ['General', [
-      ['What is SiteLens?', `${SITE} analyzes any website and shows its popularity, estimated traffic, technology stack, performance, SEO, security, hosting and history in one report. You can compare sites, watch them for changes, and use the same data through our API.`],
-      ['Is SiteLens free?', `Yes. The website is free, with ${FREE_DAILY_REPORTS} full reports a day per visitor, including global rank, traffic estimates and domain history. Results you have already opened, and your recent searches, stay available instantly. The API (for your own apps and scripts) is paid: ${priceList()}.`],
+      ['What is Webvieu?', `${SITE} analyzes any website and shows its popularity, estimated traffic, technology stack, performance, SEO, security, hosting and history in one report. You can compare sites, watch them for changes, and use the same data through our API.`],
+      ['Is Webvieu free?', `Yes. The website is free, with ${FREE_DAILY_REPORTS} full reports a day per visitor, including global rank, traffic estimates and domain history. Results you have already opened, and your recent searches, stay available instantly. The API (for your own apps and scripts) is paid: ${priceList()}.`],
       ['How accurate are the traffic numbers?', 'Monthly visits are estimates. We model them from a site’s Tranco rank using a published formula, and show a low–high range and a confidence level. They are good for comparing sites and spotting trends, not for exact figures. For sites outside the top 1 million we show “< 10K” rather than inventing a number.'],
       ['Where does the data come from?', 'Most of each report comes from live checks of the website itself: its homepage, headers, DNS, TLS certificate and public files like robots.txt. Popularity comes from the Tranco research list, domain registration from RDAP, and history from the Internet Archive.'],
       ['Why don’t you show traffic sources or demographics?', 'Those numbers come from paid clickstream panels that track people’s browsing. We don’t buy or use that kind of data, so we don’t show it. We’d rather show less than make things up.'],
-      ['What does “Lite mode” mean?', 'When SiteLens runs without its server (for example on a static host), it works entirely in your browser. You still get rank, traffic estimates, DNS, hosting, email, registration and history, but tech stack, SEO, performance and security-header audits need the server.'],
+      ['What does “Lite mode” mean?', 'When Webvieu runs without its server (for example on a static host), it works entirely in your browser. You still get rank, traffic estimates, DNS, hosting, email, registration and history, but tech stack, SEO, performance and security-header audits need the server.'],
       ['Why couldn’t a site be analyzed?', 'The site may be down, very slow, blocking automated visitors, or the domain may not exist. Try again in a minute with “Re-run”. Failed lookups never count against your limits.'],
     ]],
     ['Plans & API', [
       ['How do I get an API key?', 'Create an account, choose a plan on the Pricing page and pay securely through Stripe. Then click “Create API key” on your Account page. The key is shown once, so copy it somewhere safe.'],
-      ['Why don’t API plans include rank and traffic estimates?', `${WEBSITE_ONLY_NOTE} API plans include everything SiteLens measures itself: technology stack, SEO, performance and security audits, DNS, hosting, email, SaaS and TLS data, plus bulk analysis and monitoring.`],
+      ['Why don’t API plans include rank and traffic estimates?', `${WEBSITE_ONLY_NOTE} API plans include everything Webvieu measures itself: technology stack, SEO, performance and security audits, DNS, hosting, email, SaaS and TLS data, plus bulk analysis and monitoring.`],
       ['What counts as an analysis?', 'Each successful report for one website. Comparing 3 sites counts 3, a bulk job counts one per site, and each monitor check counts one. Failed requests (invalid or unreachable domains) are free.'],
       ['What happens if I reach my limit?', 'The API returns HTTP 429 with a clear message until your monthly quota resets on the 1st (UTC). You can upgrade anytime from “Manage billing” on your Account page.'],
       ['Can I change or cancel my plan?', 'Yes, anytime, from “Manage billing” on your Account page. Upgrades apply right away. If you cancel, your plan stays active until the end of the period you paid for.'],
@@ -90,9 +90,9 @@ function faqItems() {
     ['Privacy & data', [
       ['Do you store the websites I search?', 'A short summary of analyzed sites (title, scores, rank, technologies) is kept on our server and may appear in “Recently analyzed” and Rankings. Your own recent searches and saved results are stored only in your browser.'],
       ['Do you use cookies or trackers?', 'No tracking cookies, no ads and no third-party analytics. We use your browser’s local storage for things like your theme, recent searches, saved results and login.'],
-      ['I own a website. Can I opt out of SiteLens?', 'Yes. Contact us with the domain and we’ll stop showing it publicly and exclude it from future checks.'],
+      ['I own a website. Can I opt out of Webvieu?', 'Yes. Contact us with the domain and we’ll stop showing it publicly and exclude it from future checks.'],
       ['How do I delete my account?', 'Cancel any active plan in “Manage billing”, then contact us from your account email and we’ll delete your account and its data.'],
-      ['Is SiteLens affiliated with Similarweb?', 'No. SiteLens is an independent project and is not affiliated with Similarweb or any other analytics company.'],
+      ['Is Webvieu affiliated with Similarweb?', 'No. Webvieu is an independent project and is not affiliated with Similarweb or any other analytics company.'],
     ]],
   ];
 }
@@ -233,7 +233,7 @@ export function privacyView(ctx) {
         h('span', null, h('b', null, 'Our hosting provider'), ' runs the servers that store the data described here.'),
         h('span', null, h('b', null, 'Public data sources'), ' (Tranco, RDAP registries, the Internet Archive and Team Cymru) receive the domain names being analyzed, never your personal details.'),
       ]),
-      p('When SiteLens runs in “Lite mode”, your browser contacts some of these public sources directly (for example Google Public DNS, Tranco, rdap.org and the Internet Archive), so they can see your IP address. Website icons in reports are loaded directly from the analyzed websites.'),
+      p('When Webvieu runs in “Lite mode”, your browser contacts some of these public sources directly (for example Google Public DNS, Tranco, rdap.org and the Internet Archive), so they can see your IP address. Website icons in reports are loaded directly from the analyzed websites.'),
       p('We do not sell or rent personal information, and we don’t share it for advertising.')),
     section('6. How long we keep data',
       ul([
@@ -248,7 +248,7 @@ export function privacyView(ctx) {
     section('8. Your rights',
       p('Depending on where you live (for example under the GDPR in the EU/UK or the Digital Personal Data Protection Act in India), you may have the right to access, correct, export or delete your personal data, and to object to or restrict its use. To make a request, use our ', contactLink, ' from your account email and choose “Privacy request”. We respond within 30 days.')),
     section('9. For website owners',
-      p(`${SITE} analyzes publicly available information about websites, with a visitor identified as “SiteLensBot”. If you own a site and want it excluded from public listings and future checks, contact us with the domain.`)),
+      p(`${SITE} analyzes publicly available information about websites, with a visitor identified as “WebvieuBot”. If you own a site and want it excluded from public listings and future checks, contact us with the domain.`)),
     section('10. Children',
       p(`${SITE} is not directed at children under 16, and we don’t knowingly collect their personal data.`)),
     section('11. Changes to this policy',
@@ -264,7 +264,7 @@ export function termsView(ctx) {
   const [starter, pro, business] = plans();
   ctx.render(page('Terms of Service', `Last updated: ${UPDATED}`,
     h('div', { class: 'callout' }, h('b', null, 'In short: '),
-      'use SiteLens fairly, keep your API key private, and remember our traffic numbers are estimates. Paid plans renew monthly until you cancel, and you can cancel anytime.'),
+      'use Webvieu fairly, keep your API key private, and remember our traffic numbers are estimates. Paid plans renew monthly until you cancel, and you can cancel anytime.'),
     section('1. Agreement',
       p(`These Terms of Service (“Terms”) are an agreement between you and ${LEGAL.operator} (“${SITE}”, “we”, “us”) for your use of the ${SITE} website, reports and API (the “Service”). By using the Service or creating an account, you agree to these Terms and to our `, h('a', { href: '#/privacy' }, 'Privacy policy'), '. If you use the Service for an organization, you confirm you are allowed to accept these Terms for it.'),
       p('You must be at least 16 years old to use the Service.')),
@@ -351,19 +351,19 @@ export async function sitemapView(ctx) {
       ['#/forgot', 'Forgot password', 'Get a reset link by email'],
     ] : []],
     ['Company', [
-      ['#/about', 'About us', 'What SiteLens is and how it works'],
+      ['#/about', 'About us', 'What Webvieu is and how it works'],
       ['#/faq', 'FAQ', 'Answers about reports, plans and data'],
       ['#/contact', 'Contact us', 'Send us a message'],
     ]],
     ['Legal', [
-      ['#/terms', 'Terms of Service', 'The rules for using SiteLens'],
+      ['#/terms', 'Terms of Service', 'The rules for using Webvieu'],
       ['#/privacy', 'Privacy policy', 'How we handle your data'],
       ['#/sitemap', 'Sitemap', 'This page'],
     ]],
     ['Popular reports', ['github.com', 'wikipedia.org', 'stripe.com', 'nytimes.com', 'shopify.com', 'vercel.com'].map((d) => [`#/site/${d}`, d, 'Sample report'])],
   ].map(([t, links]) => [t, links.filter(Boolean)]).filter(([, links]) => links.length);
 
-  ctx.render(page('Sitemap', 'Every page on SiteLens in one place.',
+  ctx.render(page('Sitemap', 'Every page on Webvieu in one place.',
     h('div', { class: 'sitemap-grid' }, groups.map(([title, links]) => h('section', { class: 'card' },
       h('h2', null, title),
       h('ul', { class: 'sitemap-list' }, links.map(([href, label, desc]) => h('li', null, h('a', { href }, label), h('span', { class: 'muted small' }, desc)))))))));

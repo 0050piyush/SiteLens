@@ -3,10 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SiteLens · Website intelligence</title>
-  <meta name="description" content="Free website intelligence: traffic estimates, global rank, technology stack, SEO, performance and security for any domain.">
-  <meta name="theme-color" content="#2a78d6">
+  <title>Webvieu · See any website clearly</title>
+  <meta name="description" content="Webvieu: free website intelligence. Traffic estimates, global rank, technology stack, SEO, performance and security for any domain.">
+  <meta name="theme-color" content="#4f46e5">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta property="og:site_name" content="Webvieu">
+  <meta property="og:title" content="Webvieu · See any website clearly">
+  <meta property="og:description" content="Traffic, rank, tech stack, SEO, performance and security for any domain.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="styles.css">
   <script src="theme.js"></script>
 </head>
@@ -14,9 +21,9 @@
   <a class="skip" href="#main">Skip to content</a>
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <a class="brand" href="#/" aria-label="SiteLens home">
-        <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><circle cx="14" cy="14" r="9" fill="none" stroke="currentColor" stroke-width="3"/><path d="M21 21l7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M9.5 16.5l3-4 2.5 2.5 3.5-5" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>SiteLens</span>
+      <a class="brand" href="#/" aria-label="Webvieu home">
+        <svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><defs><linearGradient id="wv-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0ea5e9"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#wv-grad)"/><path d="M5 16c3.5-5.5 7.2-8 11-8s7.5 2.5 11 8c-3.5 5.5-7.2 8-11 8s-7.5-2.5-11-8z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M11.5 13.5l4.5 7 4.5-7" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="wordmark">web<b>vieu</b></span>
       </a>
       <form class="topsearch" id="topsearch" role="search">
         <input name="q" type="text" placeholder="Analyze a domain…" autocomplete="off" spellcheck="false" aria-label="Domain to analyze" list="recent-domains">
@@ -38,7 +45,7 @@
     <div class="wrap">
       <div class="footer-cols">
         <div class="footer-brand">
-          <b>SiteLens</b>
+          <a class="brand" href="#/" aria-label="Webvieu home"><img class="brand-mark" src="favicon.svg" width="24" height="24" alt=""><span class="wordmark">web<b>vieu</b></span></a>
           <p class="muted">Website intelligence that is honest about what it knows.</p>
         </div>
         <nav class="footer-col" aria-label="Product">
@@ -62,7 +69,7 @@
         </nav>
       </div>
       <div class="footer-bottom muted">
-        <span>© <span id="year">2026</span> SiteLens</span>
+        <span>© <span id="year">2026</span> Webvieu</span>
         <span>Rank data: <a href="https://tranco-list.eu" rel="noopener" target="_blank">Tranco</a> · Registration: RDAP · History: Internet Archive</span>
       </div>
     </div>

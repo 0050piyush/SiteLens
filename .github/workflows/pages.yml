@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Optional repository variables (Settings → Secrets and variables → Actions → Variables):
-      #   SITELENS_API_URL  – a hosted SiteLens API, for full reports
+      #   SITELENS_API_URL  – a hosted Webvieu API, for full reports
       #   SITELENS_CONTACT  – email or https URL where people request API keys
       - name: Configure API endpoint and contact
         env:
@@ -48,11 +48,19 @@ jobs:
       - name: Version asset URLs
         run: |
           V="${GITHUB_SHA::8}"
-          sed -i -E "s#(href|src)=\"(styles\.css|theme\.js|app\.js|favicon\.svg)\"#\1=\"\2?v=$V\"#g" public/index.html
+          sed -i -E "s#(href|src)=\"(styles\.css|theme\.js|app\.js|favicon\.svg|apple-touch-icon\.png|og-image\.png)\"#\1=\"\2?v=$V\"#g" public/index.html
           find public -name '*.js' -exec sed -i -E "s#(from '\.{1,2}/[^'?]+\.js)'#\1?v=$V'#g" {} +
           grep -c "?v=$V" public/index.html
 
-      - uses: actions/configure-pages@v5
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      # Link previews (WhatsApp, X, Slack…) need an absolute image URL.
+      - name: Absolute preview image URL
+        env:
+          BASE: ${{ steps.pages.outputs.base_url }}
+        run: sed -i -E "s#content=\"og-image\.png(\?v=[0-9a-f]+)?\"#content=\"${BASE%/}/og-image.png\1\"#" public/index.html
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

@@ -1,4 +1,4 @@
-// Spins up a local fixture website and the SiteLens server, then exercises the API.
+// Spins up a local fixture website and the Webvieu server, then exercises the API.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -95,12 +95,12 @@ before(async () => {
     env: {
       ...process.env, PORT: String(apiPort), HOST: '127.0.0.1', SITELENS_ALLOW_PRIVATE: '1', SITELENS_OFFLINE: '1', SITELENS_DATA_DIR: dataDir,
       SITELENS_ANON_PER_HOUR: '100', SITELENS_FREE_PER_DAY: '5', SITELENS_TRUST_PROXY: '1', SITELENS_MONITOR_TICK_MS: '200',
-      SITELENS_API_KEYS: `${KEY}:business,other-key,quota-key:starter,mon-key:starter`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
+      SITELENS_API_KEYS: `${KEY}:business,other-key,quota-key:starter,mon-key:starter`, SITELENS_ALLOWED_ORIGINS: 'https://webvieu.example.github.io/',
       SITELENS_ADMIN_TOKEN: ADMIN_TOKEN, SITELENS_AUTH_PER_15MIN: '50',
       STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: `http://127.0.0.1:${stripePort}`,
       STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_BUSINESS: 'price_business',
-      SITELENS_CONTACT: 'owner@sitelens.test', SITELENS_CONTACT_PER_HOUR: '3',
-      RESEND_API_KEY: 're_test', SITELENS_EMAIL_FROM: 'SiteLens <noreply@sitelens.test>', EMAIL_API_BASE: `http://127.0.0.1:${mailPort}`,
+      SITELENS_CONTACT: 'owner@webvieu.test', SITELENS_CONTACT_PER_HOUR: '3',
+      RESEND_API_KEY: 're_test', SITELENS_EMAIL_FROM: 'Webvieu <noreply@webvieu.test>', EMAIL_API_BASE: `http://127.0.0.1:${mailPort}`,
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -207,9 +207,9 @@ test('API requires a key except for the site itself', async () => {
 
 test('own website may call the API without a key', async () => {
   const target = `/api/v1/summary/localhost:${sitePort}`;
-  const pages = await get(target, { origin: 'https://sitelens.example.github.io' });
+  const pages = await get(target, { origin: 'https://webvieu.example.github.io' });
   assert.equal(pages.status, 200);
-  assert.equal(pages.headers.get('access-control-allow-origin'), 'https://sitelens.example.github.io');
+  assert.equal(pages.headers.get('access-control-allow-origin'), 'https://webvieu.example.github.io');
   assert.equal((await get(target, { 'sec-fetch-site': 'same-origin' })).status, 200);
   assert.equal((await get(target, { referer: `http://127.0.0.1:${apiPort}/#/site/x` })).status, 200);
   assert.equal((await get(target, { origin: `http://127.0.0.1:${apiPort}` })).status, 200);
@@ -336,9 +336,9 @@ test('monitors: baseline check, signed test webhook, plan limit, delete', async 
   assert.equal(test1.status, 200);
   assert.equal(hooks.length, 1);
   const hook = hooks[0];
-  assert.equal(hook.headers['x-sitelens-event'], 'monitor.test');
+  assert.equal(hook.headers['x-webvieu-event'], 'monitor.test');
   const expected = `sha256=${createHmac('sha256', created.body.secret).update(hook.body).digest('hex')}`;
-  assert.equal(hook.headers['x-sitelens-signature'], expected, 'webhook signature verifies');
+  assert.equal(hook.headers['x-webvieu-signature'], expected, 'webhook signature verifies');
 
   // Starter allows 5 monitors.
   for (let i = 0; i < 4; i++) assert.equal((await post('/api/v1/monitors', { domain: `site${i}.invalid`, webhook: 'https://x.example/h' }, h)).status, 201);
@@ -375,9 +375,9 @@ test('accounts: signup, login, Stripe checkout, webhook activation, API key, por
   assert.equal(blocked.status, 403);
   assert.equal(blocked.body.code, 'verify_email');
   const welcome = lastEmailTo(email);
-  assert.equal(welcome.subject, 'Confirm your SiteLens email');
+  assert.equal(welcome.subject, 'Confirm your Webvieu email');
   assert.equal(welcome.auth, 'Bearer re_test');
-  assert.equal(welcome.from, 'SiteLens <noreply@sitelens.test>');
+  assert.equal(welcome.from, 'Webvieu <noreply@webvieu.test>');
   assert.equal((await post('/api/v1/auth/verify', { token: tokenIn(welcome) }, site)).status, 200);
   assert.equal((await post('/api/v1/auth/verify', { token: tokenIn(welcome) }, site)).status, 400, 'links work once');
   assert.equal((await get('/api/v1/account', auth)).body.emailVerified, true);
@@ -414,7 +414,7 @@ test('accounts: signup, login, Stripe checkout, webhook activation, API key, por
 
   // Rotating shows the full key once; it works as an X-API-Key on the Pro plan.
   const k = await post('/api/v1/account/key', {}, auth);
-  assert.match(k.body.apiKey, /^sl_live_[0-9a-f]{48}$/);
+  assert.match(k.body.apiKey, /^wv_live_[0-9a-f]{48}$/);
   assert.equal(k.body.account.apiKey.prefix, k.body.apiKey.slice(0, 16));
   const k2 = await post('/api/v1/account/key', {}, auth);
   assert.equal((await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k2.body.apiKey })).status, 200);
@@ -463,11 +463,11 @@ test('admin can grant a plan for manual payments', async () => {
 test('email verification resend and password reset', async () => {
   const site = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.9' };
   const email = 'forgetful@example.com';
-  const signup = await post('/api/v1/auth/signup', { email, password: 'first password 1', returnTo: 'https://sitelens.example.github.io/SiteLens/#/login' }, site);
+  const signup = await post('/api/v1/auth/signup', { email, password: 'first password 1', returnTo: 'https://webvieu.example.github.io/SiteLens/#/login' }, site);
   assert.equal(signup.body.verificationSent, true);
   const first = lastEmailTo(email);
   // Links point back to the page the visitor came from (here: a Pages sub-path).
-  assert.match(first.text, /https:\/\/sitelens\.example\.github\.io\/SiteLens\/#\/verify\?token=[0-9a-f]{64}/);
+  assert.match(first.text, /https:\/\/webvieu\.example\.github\.io\/SiteLens\/#\/verify\?token=[0-9a-f]{64}/);
   assert.match(first.html, /Confirm email/);
   const auth = { ...site, authorization: `Bearer ${signup.body.token}` };
   assert.equal((await post('/api/v1/auth/resend-verification', {}, auth)).status, 429, 'resends are throttled');
@@ -481,7 +481,7 @@ test('email verification resend and password reset', async () => {
   const forgot = await post('/api/v1/auth/forgot', { email: 'Forgetful@Example.com', returnTo: `http://127.0.0.1:${apiPort}/` }, site);
   assert.equal(forgot.body.message, unknown.body.message);
   const resetMail = lastEmailTo(email);
-  assert.equal(resetMail.subject, 'Reset your SiteLens password');
+  assert.equal(resetMail.subject, 'Reset your Webvieu password');
   const token = tokenIn(resetMail);
   assert.match(resetMail.text, new RegExp(`http://127\\.0\\.0\\.1:${apiPort}/#/reset\\?token=`));
 
@@ -510,13 +510,13 @@ test('contact form: validation, honeypot, forwarding and rate limit', async () =
   const sent = await post('/api/v1/contact', msg, site);
   assert.equal(sent.status, 201);
   assert.match(sent.body.message, /Thanks/);
-  const fwd = lastEmailTo('owner@sitelens.test');
+  const fwd = lastEmailTo('owner@webvieu.test');
   assert.equal(fwd.reply_to, 'asha@example.com', 'Reply goes to the sender');
   assert.match(fwd.subject, /API plans & sales: message from Asha/);
   assert.match(fwd.text, /annual billing/);
   // Unknown topics fall back to the default one.
   await post('/api/v1/contact', { ...msg, topic: '<script>' }, site);
-  assert.match(lastEmailTo('owner@sitelens.test').subject, /General question/);
+  assert.match(lastEmailTo('owner@webvieu.test').subject, /General question/);
   // Accepted messages (and bot hits) count toward the limit: 5 per hour in production, 3 here.
   assert.equal((await post('/api/v1/contact', msg, site)).status, 429);
   assert.equal((await post('/api/v1/contact', msg, { ...site, 'x-forwarded-for': '198.51.100.21' })).status, 201, 'other visitors unaffected');

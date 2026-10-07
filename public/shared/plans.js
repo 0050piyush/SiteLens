@@ -35,7 +35,7 @@ export const WEBSITE_ONLY_DATA = [
   { id: 'archive', label: 'Archive history', source: 'Internet Archive (scholarship and research use)' },
 ];
 
-// What paid API plans include: SiteLens's own live analysis.
+// What paid API plans include: Webvieu's own live analysis.
 export const API_DATA = [
   'Technology stack (180+ fingerprints)',
   'SEO, performance & security audits',

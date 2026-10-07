@@ -5,7 +5,7 @@ export function openapi(version) {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'SiteLens API',
+      title: 'Webvieu API',
       version,
       description: 'Website intelligence: popularity rank and traffic estimates, technology stack, SEO, performance, security, DNS/hosting, registration and archive history for any domain. Requires an API key in the X-API-Key header.',
       license: { name: 'MIT' },
@@ -23,7 +23,7 @@ export function openapi(version) {
       '/api/v1/analyze/{domain}': {
         get: {
           summary: 'Full report for a domain',
-          description: 'Runs (or returns a cached) analysis. Cached for 6 hours; pass fresh=1 to re-run. API-key responses contain SiteLens\'s own live analysis and omit rank, traffic, domainInfo (registration/archive) and include a dataScope object explaining why; those fields are available on the free website only.',
+          description: 'Runs (or returns a cached) analysis. Cached for 6 hours; pass fresh=1 to re-run. API-key responses contain Webvieu\'s own live analysis and omit rank, traffic, domainInfo (registration/archive) and include a dataScope object explaining why; those fields are available on the free website only.',
           parameters: [
             domainParam,
             { name: 'fresh', in: 'query', schema: { type: 'string', enum: ['1'] } },
@@ -89,7 +89,7 @@ export function openapi(version) {
         post: {
           'x-paid': true,
           summary: 'Watch a site and get webhook alerts when it changes',
-          description: 'Body: {"domain": "example.com", "webhook": "https://your.app/hook", "interval": "daily"|"weekly"}. Alerts cover downtime, rank moves, score changes, tech added/removed, hosting and certificate changes. Each check uses one analysis. Webhooks are signed: X-SiteLens-Signature = sha256 HMAC of the body with the monitor secret (returned once, on creation).',
+          description: 'Body: {"domain": "example.com", "webhook": "https://your.app/hook", "interval": "daily"|"weekly"}. Alerts cover downtime, rank moves, score changes, tech added/removed, hosting and certificate changes. Each check uses one analysis. Webhooks are signed: X-Webvieu-Signature = sha256 HMAC of the body with the monitor secret (returned once, on creation).',
           responses: { 201: { description: 'Monitor created (includes the signing secret)' }, 400: err, 403: err },
         },
         get: { 'x-paid': true, summary: 'List your monitors', responses: { 200: { description: 'Monitors' } } },

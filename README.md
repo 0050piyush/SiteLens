@@ -1,6 +1,6 @@
-# SiteLens: open website intelligence
+# Webvieu: open website intelligence
 
-SiteLens is a self-hostable alternative to traffic-intelligence tools such as Similarweb. Type in any domain and you get:
+Webvieu is a self-hostable alternative to traffic-intelligence tools such as Similarweb. Type in any domain and you get:
 
 | Area | What you get | Where it comes from |
 | --- | --- | --- |
@@ -22,15 +22,15 @@ There's also a **watchlist** that tells you what changed since your last visit, 
 
 ### Honest about its limits
 
-Similarweb buys clickstream panel data, which is how it can report traffic sources, referrals and demographics. SiteLens has no such panel, so it doesn't show those numbers, and it never makes up figures for sites it can't rank. Visit estimates come from rank with an explicit model and confidence level, and the formula is shown on every report.
+Similarweb buys clickstream panel data, which is how it can report traffic sources, referrals and demographics. Webvieu has no such panel, so it doesn't show those numbers, and it never makes up figures for sites it can't rank. Visit estimates come from rank with an explicit model and confidence level, and the formula is shown on every report.
 
 ## Run it
 
 You need Node.js 20 or newer. There are no npm dependencies.
 
 ```bash
-git clone https://github.com/0050piyush/sitelens.git
-cd sitelens
+git clone https://github.com/0050piyush/SiteLens.git
+cd SiteLens
 npm start            # http://localhost:8080
 npm test             # unit + end-to-end tests (fully offline)
 npm run tranco       # optional: pre-download the Tranco top-1M list
@@ -41,7 +41,7 @@ When the server starts it downloads the Tranco list in the background. This turn
 With Docker:
 
 ```bash
-docker build -t sitelens . && docker run -p 8080:8080 -v sitelens-data:/app/data sitelens
+docker build -t webvieu . && docker run -p 8080:8080 -v webvieu-data:/app/data webvieu
 ```
 
 ### GitHub Pages
@@ -71,7 +71,7 @@ All endpoints are `GET` and return JSON. The OpenAPI 3.1 spec is served at `/api
 
 The API is **not** open to the public. Requests are allowed when:
 
-- they come from **SiteLens's own website**: the same origin as the server, or an origin listed in `SITELENS_ALLOWED_ORIGINS` (such as your GitHub Pages site). Website visitors get **10 full reports a day** per IP (`SITELENS_FREE_PER_DAY`); failed lookups don't count, and the site shows an upgrade screen at the limit; or
+- they come from **Webvieu's own website**: the same origin as the server, or an origin listed in `SITELENS_ALLOWED_ORIGINS` (such as your GitHub Pages site). Website visitors get **10 full reports a day** per IP (`SITELENS_FREE_PER_DAY`); failed lookups don't count, and the site shows an upgrade screen at the limit; or
 - they send a valid **API key** in the `X-API-Key` header (or `?api_key=`). Each key belongs to a plan, which sets its limits.
 
 ### What's free and what's paid
@@ -81,7 +81,7 @@ Some data comes from third-party datasets licensed for non-commercial or researc
 - domain registration (RDAP registries)
 - archive history (the Internet Archive)
 
-That data is shown **only on the free website**. **Paid API plans sell only SiteLens's own live analysis:** tech stack, SEO, performance and security audits, DNS, hosting, email, SaaS and TLS data, plus bulk analysis and monitoring.
+That data is shown **only on the free website**. **Paid API plans sell only Webvieu's own live analysis:** tech stack, SEO, performance and security audits, DNS, hosting, email, SaaS and TLS data, plus bulk analysis and monitoring.
 
 The server enforces this. API-key requests never fetch the restricted sources, their responses and CSVs leave those fields and columns out (with a `dataScope` note explaining why), and `/api/v1/rank` and `/api/v1/top` return `403 website_only` to API keys. Logged-in customers use the website on the same free terms as everyone else. The lists live in `public/shared/plans.js` (`WEBSITE_ONLY_DATA`, `API_DATA`). If you later get commercial permission from a source, remove it from `WEBSITE_ONLY_DATA`.
 
@@ -124,7 +124,7 @@ curl -X POST https://YOUR-SERVER/api/v1/admin/grant -H "X-Admin-Token: $SITELENS
 Accounts are stored in `data/users.json`: passwords as scrypt hashes, and sessions and API keys as SHA-256 hashes. **Keep `data/` on persistent storage and back it up.** Some free hosting tiers (Render's free plan, for one) wipe the disk on each deploy, which would delete accounts. **Email (verification and password reset):** new accounts get a "Confirm your email" link (valid for 24 hours), and they must confirm before buying a plan. "Forgot password?" on the login page emails a single-use reset link that's valid for 1 hour. Resetting signs the account out everywhere else, and the reply is the same whether or not the email has an account. To turn email on:
 
 1. Create a free [Resend](https://resend.com) account, verify your sending domain, and create an API key. SendGrid works too.
-2. Set `RESEND_API_KEY` (or `SENDGRID_API_KEY`) and `SITELENS_EMAIL_FROM`, for example `SiteLens <noreply@yourdomain.com>`.
+2. Set `RESEND_API_KEY` (or `SENDGRID_API_KEY`) and `SITELENS_EMAIL_FROM`, for example `Webvieu <noreply@yourdomain.com>`.
 
 Without email configured, signup still works and verification isn't required, but password reset is unavailable. For local development, `SITELENS_EMAIL_PROVIDER=console` prints emails, links included, to the server log.
 
@@ -144,11 +144,11 @@ Jobs run in the background (4 sites at a time), skip duplicates, report invalid 
 
 ```bash
 curl -X POST -H "X-API-Key: YOUR_KEY" -H "content-type: application/json" \
-  -d '{"domain": "competitor.com", "webhook": "https://your.app/hooks/sitelens", "interval": "weekly"}' \
+  -d '{"domain": "competitor.com", "webhook": "https://your.app/hooks/webvieu", "interval": "weekly"}' \
   https://your-server/api/v1/monitors
 ```
 
-SiteLens records a baseline right away, then re-checks the site daily or weekly. When something changes it POSTs a `site.changed` event to the webhook. Changes include the site going down or coming back, rank moving by 10%+, any score moving 5+ points, technologies added or removed, a hosting move, a certificate issuer change or expiry within 14 days, and a new homepage title. Each check uses one analysis. Webhooks carry `X-SiteLens-Signature: sha256=<HMAC of the body with the monitor's secret>`; the secret is returned once, when the monitor is created. `GET /api/v1/monitors/{id}` shows status and the last 52 checks, `POST /api/v1/monitors/{id}/test` sends a test webhook, and `DELETE` removes it. Monitors are saved in `data/monitors.json`. Alerts go out by webhook only; email alerts would need a mail provider. Payment is not automated yet: the pricing page's buttons email `SITELENS_CONTACT`, and you add the key.
+Webvieu records a baseline right away, then re-checks the site daily or weekly. When something changes it POSTs a `site.changed` event to the webhook. Changes include the site going down or coming back, rank moving by 10%+, any score moving 5+ points, technologies added or removed, a hosting move, a certificate issuer change or expiry within 14 days, and a new homepage title. Each check uses one analysis. Webhooks carry `X-Webvieu-Signature: sha256=<HMAC of the body with the monitor's secret>`; the secret is returned once, when the monitor is created. `GET /api/v1/monitors/{id}` shows status and the last 52 checks, `POST /api/v1/monitors/{id}/test` sends a test webhook, and `DELETE` removes it. Monitors are saved in `data/monitors.json`. Alerts go out by webhook only; email alerts would need a mail provider. Payment is not automated yet: the pricing page's buttons email `SITELENS_CONTACT`, and you add the key.
 
 Everyone else gets `401 An API key is required`, and other websites' browsers get no CORS access. `/api/v1/status` and `/api/openapi.json` stay open for health checks and docs. Set `SITELENS_PUBLIC_API=1` if you ever want an open API.
 
@@ -187,7 +187,7 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | none | Stripe API key and webhook signing secret (see Accounts and payments) |
 | `STRIPE_PRICE_STARTER` / `_PRO` / `_BUSINESS` | none | Stripe price IDs for each plan |
 | `RESEND_API_KEY` or `SENDGRID_API_KEY` | none | Email provider for verification and password-reset emails |
-| `SITELENS_EMAIL_FROM` | none | Sender, e.g. `SiteLens <noreply@yourdomain.com>` (must be verified with the provider) |
+| `SITELENS_EMAIL_FROM` | none | Sender, e.g. `Webvieu <noreply@yourdomain.com>` (must be verified with the provider) |
 | `SITELENS_ADMIN_TOKEN` | none | Enables `POST /api/v1/admin/grant` for manual payments (16+ characters) |
 | `SITELENS_APP_URL` | request origin | Where Stripe sends customers back to, if not the page that started checkout |
 | `SITELENS_PUBLIC_API` | off | Set `1` to make the API open to everyone (anonymous limits apply) |

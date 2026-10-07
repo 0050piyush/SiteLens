@@ -6,7 +6,7 @@ import zlib from 'node:zlib';
 import { HttpError } from './util.js';
 
 export const USER_AGENT =
-  'Mozilla/5.0 (compatible; SiteLensBot/1.0; +https://github.com/0050piyush/claude-code/tree/main/sitelens)';
+  'Mozilla/5.0 (compatible; WebvieuBot/1.0; +https://github.com/0050piyush/SiteLens)';
 
 // Addresses the analyzer must never connect to (SSRF protection): loopback,
 // RFC 1918, link-local/cloud metadata, CGNAT, multicast, reserved.

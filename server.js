@@ -31,7 +31,7 @@ const inflight = new Map();
 const startedAt = Date.now();
 const stats = { analyses: 0, cacheHits: 0, requests: 0 };
 
-// Access policy. The API is private by default: SiteLens's own web pages may
+// Access policy. The API is private by default: Webvieu's own web pages may
 // call it (same origin, or an origin listed in SITELENS_ALLOWED_ORIGINS) with
 // per-visitor limits, and every other caller needs a key from SITELENS_API_KEYS.
 // SITELENS_PUBLIC_API=1 opens it to everyone (with the anonymous limits).
@@ -79,7 +79,7 @@ const originOf = (value) => {
 };
 
 /**
- * Who is calling: a key holder, SiteLens's own website, or an outsider.
+ * Who is calling: a key holder, Webvieu's own website, or an outsider.
  * Browser headers can be forged by scripts, so the per-IP limits on the
  * "site" tier remain the backstop; keys are what unlock real volume.
  */
@@ -165,7 +165,7 @@ const bulk = new BulkJobs({
 
 async function sendWebhook(url, payload, secret, event) {
   const body = JSON.stringify(payload);
-  return postJson(url, payload, { headers: { 'x-sitelens-event': event, 'x-sitelens-signature': signPayload(secret, body) } });
+  return postJson(url, payload, { headers: { 'x-webvieu-event': event, 'x-webvieu-signature': signPayload(secret, body) } });
 }
 
 const monitors = new Monitors({
@@ -669,7 +669,7 @@ route('GET', '/api/v1/bulk/([^/]+)', 'requests', async (req, res, [id], q, calle
   if (!job) throw new HttpError(404, 'No such bulk job (jobs are kept for 24 hours).');
   if (q.get('format') === 'csv') {
     const header = reportToCsvRows([], { api: true })[0];
-    return sendCsv(res, `sitelens-bulk-${id.slice(0, 8)}.csv`, [header, ...job.csvRows.filter(Boolean)]);
+    return sendCsv(res, `webvieu-bulk-${id.slice(0, 8)}.csv`, [header, ...job.csvRows.filter(Boolean)]);
   }
   send(res, 200, bulk.view(job));
 });
@@ -691,8 +691,8 @@ route('POST', '/api/v1/monitors', 'requests', async (req, res, _m, _q, caller) =
     throw new HttpError(403, `Your ${plan.name} plan allows ${plan.monitors} monitors. Delete one or upgrade.`);
   }
   const m = monitors.create({ key: caller.key, domain, webhook: webhook.href, interval });
-  // The secret is shown once: use it to verify the X-SiteLens-Signature header.
-  send(res, 201, { ...monitors.view(m, { secret: true }), note: 'Store the secret: webhooks are signed with HMAC-SHA256 in the X-SiteLens-Signature header.' });
+  // The secret is shown once: use it to verify the X-Webvieu-Signature header.
+  send(res, 201, { ...monitors.view(m, { secret: true }), note: 'Store the secret: webhooks are signed with HMAC-SHA256 in the X-Webvieu-Signature header.' });
 });
 
 route('GET', '/api/v1/monitors', 'requests', async (req, res, _m, _q, caller) => {
@@ -717,7 +717,7 @@ route('POST', '/api/v1/monitors/([^/]+)/test', 'requests', async (req, res, [id]
   requireKey(caller, 'Monitoring');
   const m = monitors.get(id, caller.key);
   if (!m) throw new HttpError(404, 'No such monitor');
-  const alert = await monitors.notify(m, 'monitor.test', { message: 'Test webhook from SiteLens', snapshot: m.last });
+  const alert = await monitors.notify(m, 'monitor.test', { message: 'Test webhook from Webvieu', snapshot: m.last });
   send(res, alert.ok ? 200 : 502, { delivered: alert.ok, ...alert });
 });
 
@@ -725,7 +725,7 @@ route('GET', '/api/openapi.json', 'requests', async (req, res) => send(res, 200,
 
 const isApi = (caller) => caller?.tier === 'key';
 const WEBSITE_ONLY_ERROR = () => new HttpError(403,
-  'Global rank and traffic estimates are available on the free SiteLens website only. They come from third-party data licensed for non-commercial use, so API plans do not include them.',
+  'Global rank and traffic estimates are available on the free Webvieu website only. They come from third-party data licensed for non-commercial use, so API plans do not include them.',
   { code: 'website_only' });
 function summaryFor(report, api) {
   const s = summarize(report);
@@ -840,7 +840,7 @@ if (loadLocalList()) {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`SiteLens ${VERSION} running at http://localhost:${PORT}`);
+  console.log(`Webvieu ${VERSION} running at http://localhost:${PORT}`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

@@ -24,7 +24,9 @@ export function verifyPassword(password, stored) {
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
 
-export const newApiKey = () => `sl_live_${randomBytes(24).toString('hex')}`;
+export const newApiKey = () => `wv_live_${randomBytes(24).toString('hex')}`;
+// Keys issued before the rename to Webvieu start with sl_live_ and keep working.
+const KEY_PREFIXES = ['wv_live_', 'sl_live_'];
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,24}$/i;
 
@@ -180,7 +182,7 @@ export class Accounts {
   }
 
   userForApiKey(key) {
-    if (!key || !String(key).startsWith('sl_live_')) return null;
+    if (!key || !KEY_PREFIXES.some((p) => String(key).startsWith(p))) return null;
     const h = sha256(key);
     return this.data.users.find((u) => u.apiKeyHash === h) || null;
   }

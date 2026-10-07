@@ -1,4 +1,4 @@
-// Browser-only analysis, used when no SiteLens API server is available (for
+// Browser-only analysis, used when no Webvieu API server is available (for
 // example on GitHub Pages). It relies on public services that allow
 // cross-origin requests: DNS-over-HTTPS, RDAP, the Internet Archive and Tranco.
 // Anything that needs the site's own HTML or headers requires the API server.

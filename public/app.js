@@ -31,7 +31,7 @@ function cleanDomain(input) {
 
 const apiUrl = (path) => `${API_BASE}${path}`;
 
-// Full mode needs a SiteLens API server; without one (e.g. GitHub Pages) the
+// Full mode needs a Webvieu API server; without one (e.g. GitHub Pages) the
 // app falls back to browser-only checks.
 let backendPromise;
 function hasBackend() {
@@ -45,7 +45,7 @@ function liteNotice() {
   return h('div', { class: 'callout', style: { marginTop: '16px' } },
     h('b', null, 'Lite mode. '),
     'This copy runs entirely in your browser, so it shows DNS, hosting, email, rank, registration and archive data. ',
-    'Tech stack, SEO, performance and security-header audits need the SiteLens API server. ',
+    'Tech stack, SEO, performance and security-header audits need the Webvieu API server. ',
     h('a', { href: 'https://github.com/0050piyush/SiteLens#run-it', target: '_blank', rel: 'noopener' }, 'How to run it →'));
 }
 
@@ -264,7 +264,7 @@ function homeView() {
   const lead = h('p', { class: 'lead' }, 'Traffic estimates, global rank, tech stack, SEO, performance and security for any domain. Free, no sign-up.');
   const view = h('div', null,
     h('section', { class: 'hero' },
-      h('h1', null, 'See inside ', h('span', { class: 'hl' }, 'any website'), '.'),
+      h('h1', null, 'See ', h('span', { class: 'hl' }, 'any website'), ' clearly.'),
       lead,
       searchForm({ big: true }),
       h('div', { class: 'chips examples' },
@@ -280,10 +280,10 @@ function homeView() {
       FEATURES.map(([d, t, p]) => h('div', { class: 'card feature' },
         h('div', { class: 'ico' }, svgIcon(d)), h('h3', null, t), h('p', null, p)))),
     h('section', { class: 'section card' },
-      h('div', { class: 'card-head' }, h('div', null, h('h2', null, 'How SiteLens compares'),
+      h('div', { class: 'card-head' }, h('div', null, h('h2', null, 'How Webvieu compares'),
         h('p', { class: 'muted small' }, 'An honest comparison with typical paid traffic-intelligence tools.'))),
       h('div', { class: 'table-wrap' }, h('table', { class: 'vs-table' },
-        h('thead', null, h('tr', null, h('th', null, 'Feature'), h('th', null, 'SiteLens'), h('th', null, 'Typical paid tools'))),
+        h('thead', null, h('tr', null, h('th', null, 'Feature'), h('th', null, 'Webvieu'), h('th', null, 'Typical paid tools'))),
         h('tbody', null, [
           ['Full report without an account', true, 'Limited preview'],
           ['REST API for your own apps', 'From $15/month', 'Sales-only, annual contracts'],
@@ -371,7 +371,7 @@ async function siteView(domain, fresh = false) {
   if (currentRoute !== `site:${domain}`) return;
   if (!r.reachable) return render(errorView(`Couldn't reach ${r.host || domain}`, r.error || 'The site did not respond.', () => siteView(domain, true)));
   addSearch(domain);
-  document.title = `${r.domain} · SiteLens`;
+  document.title = `${r.domain} · Webvieu`;
   render(r.mode === 'lite' ? liteReportView(r, cachedAt) : reportView(r, cachedAt));
 }
 
@@ -741,7 +741,7 @@ function apiSnippet(domain) {
 
 function downloadJson(r) {
   const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' });
-  const a = h('a', { download: `${r.domain}-sitelens.json` });
+  const a = h('a', { download: `${r.domain}-webvieu.json` });
   a.href = URL.createObjectURL(blob);
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -971,7 +971,7 @@ async function topView(tab = 'global') {
     body));
 
   if (!(await hasBackend())) {
-    body.replaceChildren(h('div', { class: 'callout' }, 'Rankings come from the SiteLens API server, which this copy of the site does not have. ',
+    body.replaceChildren(h('div', { class: 'callout' }, 'Rankings come from the Webvieu API server, which this copy of the site does not have. ',
       h('a', { href: 'https://github.com/0050piyush/SiteLens#run-it', target: '_blank', rel: 'noopener' }, 'How to run it →')));
     return;
   }
@@ -1060,7 +1060,7 @@ async function apiView() {
   });
 
   render(h('div', null,
-    h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'SiteLens API'),
+    h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'Webvieu API'),
     h('p', { class: 'muted', style: { maxWidth: '720px' } }, 'A JSON API for website intelligence. Access requires an API key (plans from $15/month, see ', h('a', { href: '#/pricing' }, 'Pricing'), '), sent in the X-API-Key header. The playground below runs through this website, so it works without one. Responses are cached for 6 hours, and the full OpenAPI 3.1 spec is at ',
       h('a', { href: apiUrl('/api/openapi.json') }, '/api/openapi.json'), '.'),
     h('div', { class: 'grid g-main section' },
@@ -1077,7 +1077,7 @@ async function apiView() {
       codeCard('Python', `import requests\n\nr = requests.get(\n  "${base}/api/v1/compare",\n  params={"domains": "stripe.com,adyen.com"},\n  headers={"X-API-Key": "YOUR_KEY"},\n)\nprint(r.json()["sites"])`))));
 
   if (!(await hasBackend())) {
-    const msg = 'No API server is connected to this copy of SiteLens. Run the server (npm start) or set the SITELENS_API_URL repository variable, then redeploy.';
+    const msg = 'No API server is connected to this copy of Webvieu. Run the server (npm start) or set the SITELENS_API_URL repository variable, then redeploy.';
     endpoints.replaceChildren(h('p', { class: 'muted small', style: { margin: 0 } }, msg));
     statusBox.replaceChildren(h('dl', { class: 'kv' }, h('dt', null, 'Status'), h('dd', null, 'Lite mode (browser only)')));
     return;
@@ -1148,12 +1148,12 @@ async function pricingView() {
   const view = h('div', null,
     h('div', { class: 'pricing-head' },
       h('h1', null, 'Simple, honest pricing'),
-      h('p', { class: 'muted' }, 'The SiteLens website is free. API access for your own apps starts at $15 a month, with no sales call and no annual contract.')),
+      h('p', { class: 'muted' }, 'The Webvieu website is free. API access for your own apps starts at $15 a month, with no sales call and no annual contract.')),
     h('div', { class: 'plans' },
       h('div', { class: 'card plan' },
         h('h3', null, 'Website'),
         h('div', { class: 'price' }, h('b', null, 'Free')),
-        h('p', { class: 'muted small plan-blurb' }, 'Use SiteLens in your browser.'),
+        h('p', { class: 'muted small plan-blurb' }, 'Use Webvieu in your browser.'),
         h('ul', { class: 'plan-features' },
           h('li', null, `${FREE_DAILY_REPORTS} full reports a day`),
           h('li', null, h('b', null, 'Global rank & traffic estimates')),
@@ -1177,9 +1177,9 @@ async function pricingView() {
         h('h3', null, 'Why it costs less'),
         h('p', { class: 'muted small', style: { marginTop: '8px' } },
           'Incumbent traffic-intelligence APIs are usually sold through sales teams and bundled into five-figure annual contracts. ',
-          'Paid plans are built on SiteLens’s own live analysis of each website, so we can offer a self-serve API from $15 a month.'),
+          'Paid plans are built on Webvieu’s own live analysis of each website, so we can offer a self-serve API from $15 a month.'),
         h('p', { class: 'muted small' },
-          'SiteLens does not have clickstream panel data, so it does not report traffic sources, referrals or demographics. Visit numbers are model estimates with ranges.'))));
+          'Webvieu does not have clickstream panel data, so it does not report traffic sources, referrals or demographics. Visit numbers are model estimates with ranges.'))));
 
   render(view);
   // With online payments on, plan buttons start checkout (logging in first if
@@ -1199,7 +1199,7 @@ async function pricingView() {
       cta.replaceWith(btn);
       continue;
     }
-    const href = contactHref(contact, `SiteLens ${plan.name} API plan`);
+    const href = contactHref(contact, `Webvieu ${plan.name} API plan`);
     if (href) {
       const a = h('a', { class: cta.className, href, target: href.startsWith('mailto:') ? null : '_blank', rel: 'noopener' }, `Get ${plan.name}`);
       cta.replaceWith(a);
@@ -1266,8 +1266,8 @@ function authCard(...children) {
 
 async function needsServer() {
   if (await hasBackend()) return false;
-  render(h('div', { class: 'loading' }, h('h2', null, 'Accounts need the SiteLens server'),
-    h('p', { class: 'muted' }, 'This copy of SiteLens runs entirely in your browser, so there is nowhere to keep accounts yet.')));
+  render(h('div', { class: 'loading' }, h('h2', null, 'Accounts need the Webvieu server'),
+    h('p', { class: 'muted' }, 'This copy of Webvieu runs entirely in your browser, so there is nowhere to keep accounts yet.')));
   return true;
 }
 
@@ -1342,8 +1342,8 @@ async function verifyView(params) {
 
 async function loginView(params) {
   if (!(await hasBackend())) {
-    return render(h('div', { class: 'loading' }, h('h2', null, 'Accounts need the SiteLens server'),
-      h('p', { class: 'muted' }, 'This copy of SiteLens runs entirely in your browser, so there is nowhere to keep accounts yet.'),
+    return render(h('div', { class: 'loading' }, h('h2', null, 'Accounts need the Webvieu server'),
+      h('p', { class: 'muted' }, 'This copy of Webvieu runs entirely in your browser, so there is nowhere to keep accounts yet.'),
       h('p', null, h('a', { href: '#/pricing' }, 'See pricing →'))));
   }
   const next = params.get('next') || '';
@@ -1357,12 +1357,12 @@ async function loginView(params) {
   const title = h('h1');
   const switchLink = h('p', { class: 'muted small', style: { textAlign: 'center', margin: '14px 0 0' } });
   const paint = () => {
-    title.textContent = mode === 'signup' ? 'Create your account' : 'Log in to SiteLens';
+    title.textContent = mode === 'signup' ? 'Create your account' : 'Log in to Webvieu';
     submit.textContent = mode === 'signup' ? 'Create account' : 'Log in';
     password.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
     forgot.hidden = mode === 'signup';
     consent.hidden = mode !== 'signup';
-    switchLink.replaceChildren(mode === 'signup' ? 'Already have an account? ' : 'New to SiteLens? ',
+    switchLink.replaceChildren(mode === 'signup' ? 'Already have an account? ' : 'New to Webvieu? ',
       h('a', { href: '#', onclick: (e) => { e.preventDefault(); mode = mode === 'signup' ? 'login' : 'signup'; error.textContent = ''; paint(); } },
         mode === 'signup' ? 'Log in' : 'Create an account'));
   };
@@ -1514,7 +1514,7 @@ async function accountView(params) {
             currentKey,
             keyBox,
             h('pre', { style: { marginTop: '12px' } }, `curl -H "X-API-Key: YOUR_KEY" \\\n  ${base}/api/v1/analyze/stripe.com`),
-            h('p', { class: 'muted small' }, 'API responses include SiteLens’s own live analysis. Global rank, traffic estimates and domain history stay on the free website. ', h('a', { href: '#/api' }, 'API docs →')))
+            h('p', { class: 'muted small' }, 'API responses include Webvieu’s own live analysis. Global rank, traffic estimates and domain history stay on the free website. ', h('a', { href: '#/api' }, 'API docs →')))
           : h('p', { class: 'muted small' }, 'Your API key appears here once you have a plan.')))));
 }
 
@@ -1533,7 +1533,7 @@ function route() {
   const params = new URLSearchParams(query);
   const [, view, arg = ''] = path.match(/^#\/([^/]*)\/?(.*)$/) || [];
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#/${view}`));
-  document.title = 'SiteLens · Website intelligence';
+  document.title = 'Webvieu · See any website clearly';
   window.scrollTo(0, 0);
   const decoded = decodeURIComponent(arg);
   currentRoute = `${view}:${view === 'site' ? cleanDomain(decoded) : decoded}`;
@@ -1586,7 +1586,7 @@ const yearEl = document.getElementById('year');
 if (yearEl) yearEl.textContent = String(new Date().getFullYear());
 refreshNav();
 refreshSuggestions();
-// Rankings and API need the SiteLens server; hide them in browser-only mode.
+// Rankings and API need the Webvieu server; hide them in browser-only mode.
 hasBackend().then((ok) => {
   if (!ok) document.querySelectorAll('[data-needs-server]').forEach((el) => { el.hidden = true; });
 });
