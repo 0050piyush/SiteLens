@@ -1249,8 +1249,94 @@ async function buyPlan(planId, btn) {
     location.href = url;
   } catch (err) {
     if (err.status === 401) { location.hash = `#/login?next=buy:${planId}`; return; }
+    if (err.body?.code === 'verify_email') {
+      // Remember the plan so the confirmation page can continue to checkout.
+      store.set('sitelens-pending-plan', planId);
+      location.hash = '#/account?verify=needed';
+      return;
+    }
     if (btn) { btn.disabled = false; btn.textContent = `Get ${PLANS[planId].name}`; }
     alert(err.message);
+  }
+}
+
+function authCard(...children) {
+  return h('div', { class: 'auth-wrap' }, h('div', { class: 'card auth-card' }, children));
+}
+
+async function needsServer() {
+  if (await hasBackend()) return false;
+  render(h('div', { class: 'loading' }, h('h2', null, 'Accounts need the SiteLens server'),
+    h('p', { class: 'muted' }, 'This copy of SiteLens runs entirely in your browser, so there is nowhere to keep accounts yet.')));
+  return true;
+}
+
+async function forgotView() {
+  if (await needsServer()) return;
+  const email = h('input', { class: 'field', type: 'email', autocomplete: 'email', required: true, placeholder: 'you@company.com', 'aria-label': 'Email' });
+  const msg = h('div', { class: 'form-error', role: 'status' });
+  const submit = h('button', { class: 'btn primary', type: 'submit', style: { width: '100%', height: '44px' } }, 'Email me a reset link');
+  const form = h('form', { class: 'auth-form' }, email, msg, submit);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    submit.disabled = true;
+    msg.textContent = '';
+    try {
+      const res = await api('/api/v1/auth/forgot', { method: 'POST', body: { email: email.value, returnTo: returnTo() } });
+      form.replaceWith(h('div', { class: 'callout', style: { marginTop: '14px' } }, res.message, ' Check your spam folder if it doesn\'t arrive.'));
+    } catch (err) {
+      msg.textContent = err.message;
+      submit.disabled = false;
+    }
+  });
+  render(authCard(h('h1', null, 'Forgot your password?'), h('p', { class: 'muted small' }, 'Enter your account email and we\'ll send you a link to choose a new password.'), form,
+    h('p', { class: 'muted small', style: { textAlign: 'center', margin: '14px 0 0' } }, h('a', { href: '#/login' }, '← Back to log in'))));
+  email.focus();
+}
+
+async function resetView(params) {
+  if (await needsServer()) return;
+  const token = params.get('token') || '';
+  const pw = h('input', { class: 'field', type: 'password', autocomplete: 'new-password', required: true, minlength: '8', placeholder: 'New password (8+ characters)', 'aria-label': 'New password' });
+  const pw2 = h('input', { class: 'field', type: 'password', autocomplete: 'new-password', required: true, minlength: '8', placeholder: 'Repeat new password', 'aria-label': 'Repeat new password' });
+  const msg = h('div', { class: 'form-error', role: 'alert' });
+  const submit = h('button', { class: 'btn primary', type: 'submit', style: { width: '100%', height: '44px' } }, 'Set new password');
+  const form = h('form', { class: 'auth-form' }, pw, pw2, msg, submit);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = '';
+    if (pw.value !== pw2.value) { msg.textContent = 'The passwords don\'t match.'; return; }
+    submit.disabled = true;
+    try {
+      const res = await api('/api/v1/auth/reset', { method: 'POST', body: { token, password: pw.value } });
+      session.set(res.token);
+      location.hash = '#/account?password=updated';
+    } catch (err) {
+      msg.textContent = err.message;
+      submit.disabled = false;
+    }
+  });
+  render(authCard(h('h1', null, 'Choose a new password'),
+    token ? form : h('p', { class: 'form-error' }, 'This reset link is incomplete. Request a new one.'),
+    h('p', { class: 'muted small', style: { textAlign: 'center', margin: '14px 0 0' } }, h('a', { href: '#/forgot' }, 'Request a new link'))));
+  pw.focus();
+}
+
+async function verifyView(params) {
+  if (await needsServer()) return;
+  render(authCard(h('h1', null, 'Confirming your email…')));
+  try {
+    const res = await api('/api/v1/auth/verify', { method: 'POST', body: { token: params.get('token') || '' } });
+    const pending = store.get('sitelens-pending-plan', null);
+    const plan = PLANS[pending];
+    store.set('sitelens-pending-plan', null);
+    const next = plan && session.get()
+      ? (() => { const b = h('button', { class: 'btn primary', type: 'button', style: { width: '100%', height: '44px' } }, `Continue to ${plan.name} checkout`); b.addEventListener('click', () => buyPlan(plan.id, b)); return b; })()
+      : h('a', { class: 'btn primary', href: session.get() ? '#/account' : '#/login', style: { width: '100%', height: '44px' } }, session.get() ? 'Go to your account' : 'Log in');
+    render(authCard(h('h1', null, 'Email confirmed ✓'), h('p', { class: 'muted' }, `Thanks: ${res.email} is confirmed. You can now buy API plans.`), next));
+  } catch (err) {
+    render(authCard(h('h1', null, 'That link didn\'t work'), h('p', { class: 'muted' }, err.message),
+      h('a', { class: 'btn', href: '#/account' }, 'Send a new link from your account')));
   }
 }
 
@@ -1274,17 +1360,19 @@ async function loginView(params) {
     title.textContent = mode === 'signup' ? 'Create your account' : 'Log in to SiteLens';
     submit.textContent = mode === 'signup' ? 'Create account' : 'Log in';
     password.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+    forgot.hidden = mode === 'signup';
     switchLink.replaceChildren(mode === 'signup' ? 'Already have an account? ' : 'New to SiteLens? ',
       h('a', { href: '#', onclick: (e) => { e.preventDefault(); mode = mode === 'signup' ? 'login' : 'signup'; error.textContent = ''; paint(); } },
         mode === 'signup' ? 'Log in' : 'Create an account'));
   };
-  const form = h('form', { class: 'auth-form' }, email, password, error, submit);
+  const forgot = h('a', { class: 'small forgot-link', href: '#/forgot' }, 'Forgot password?');
+  const form = h('form', { class: 'auth-form' }, email, password, forgot, error, submit);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     error.textContent = '';
     submit.disabled = true;
     try {
-      const res = await api(`/api/v1/auth/${mode === 'signup' ? 'signup' : 'login'}`, { method: 'POST', body: { email: email.value, password: password.value } });
+      const res = await api(`/api/v1/auth/${mode === 'signup' ? 'signup' : 'login'}`, { method: 'POST', body: { email: email.value, password: password.value, returnTo: returnTo() } });
       session.set(res.token);
       const buy = /^buy:(starter|pro|business)$/.exec(next)?.[1];
       if (buy) return buyPlan(buy);
@@ -1362,6 +1450,22 @@ async function accountView(params) {
     location.hash = '#/';
   };
 
+  let verifyBanner = null;
+  if (acct.emailEnabled && !acct.emailVerified) {
+    const resend = h('button', { class: 'btn sm', type: 'button' }, 'Resend email');
+    const note = h('span', { class: 'muted small' });
+    resend.addEventListener('click', async () => {
+      resend.disabled = true;
+      try {
+        await api('/api/v1/auth/resend-verification', { method: 'POST', body: { returnTo: returnTo() } });
+        note.textContent = ' Sent. Check your inbox and spam folder.';
+      } catch (err) { note.textContent = ` ${err.message}`; resend.disabled = false; }
+    });
+    verifyBanner = h('div', { class: 'callout warn section', style: { marginTop: '8px' } },
+      h('b', null, 'Confirm your email. '),
+      `We sent a link to ${acct.email}. ${params.get('verify') === 'needed' ? 'You need to confirm it before buying a plan. ' : ''}`,
+      resend, note);
+  }
   const u = acct.usage;
   const pct = u ? Math.min(100, Math.round((u.used / u.limit) * 100)) : 0;
   const rotateBtn = h('button', { class: 'btn sm', type: 'button' }, acct.apiKey ? 'Create new key' : 'Create API key');
@@ -1374,6 +1478,8 @@ async function accountView(params) {
     h('div', { class: 'card-head' },
       h('div', null, h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'Your account'), h('p', { class: 'muted', style: { margin: '6px 0 0' } }, acct.email)),
       h('button', { class: 'btn sm', type: 'button', onclick: logout }, 'Log out')),
+    verifyBanner,
+    params.get('password') === 'updated' ? h('div', { class: 'callout section', style: { marginTop: '8px' } }, h('b', null, 'Password updated. '), 'You\'ve been signed out on all other devices.') : null,
     justPaid ? h('div', { class: 'callout section', style: { marginTop: '8px' } }, acct.active
       ? [h('b', null, 'Payment received. '), `Your ${acct.plan.name} plan is active.`]
       : [h('b', null, 'Payment is processing. '), 'Your plan will appear here shortly. Refresh in a minute.']) : null,
@@ -1436,6 +1542,9 @@ function route() {
     case 'pricing': return pricingView();
     case 'login': return loginView(params);
     case 'account': return accountView(params);
+    case 'forgot': return forgotView();
+    case 'reset': return resetView(params);
+    case 'verify': return verifyView(params);
     default: return render(homeView());
   }
 }

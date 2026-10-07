@@ -24,6 +24,12 @@ const WHSEC = 'whsec_test_secret';
 let stripeServer;
 let stripePort;
 const stripeCalls = [];
+let mailServer;
+let mailPort;
+const emails = [];
+// The newest email sent to an address, and the token in its link.
+const lastEmailTo = (to) => emails.filter((e) => e.to[0] === to).at(-1);
+const tokenIn = (email) => /token=([0-9a-f]{64})/.exec(email.text)?.[1];
 
 function listen(srv) {
   return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
@@ -66,6 +72,18 @@ before(async () => {
   });
   stripePort = await listen(stripeServer);
 
+  // A stand-in for the Resend email API.
+  mailServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      emails.push({ ...JSON.parse(body), auth: req.headers.authorization, path: req.url });
+      res.setHeader('content-type', 'application/json');
+      res.end('{"id":"email_1"}');
+    });
+  });
+  mailPort = await listen(mailServer);
+
   // quota-key starts one analysis short of the Starter plan's monthly quota.
   fs.writeFileSync(path.join(dataDir, 'usage.json'), JSON.stringify({ month: new Date().toISOString().slice(0, 7), counts: { 'quota-key': 999 } }));
 
@@ -81,6 +99,7 @@ before(async () => {
       SITELENS_ADMIN_TOKEN: ADMIN_TOKEN, SITELENS_AUTH_PER_15MIN: '50',
       STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: `http://127.0.0.1:${stripePort}`,
       STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_BUSINESS: 'price_business',
+      RESEND_API_KEY: 're_test', SITELENS_EMAIL_FROM: 'SiteLens <noreply@sitelens.test>', EMAIL_API_BASE: `http://127.0.0.1:${mailPort}`,
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -95,6 +114,7 @@ after(() => {
   site?.close();
   hookServer?.close();
   stripeServer?.close();
+  mailServer?.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -344,7 +364,19 @@ test('accounts: signup, login, Stripe checkout, webhook activation, API key, por
   const auth = { ...site, authorization: `Bearer ${login.body.token}` };
 
   const acct = await get('/api/v1/account', auth);
-  assert.deepEqual([acct.body.email, acct.body.active, acct.body.billing.enabled], [email, false, true]);
+  assert.deepEqual([acct.body.email, acct.body.active, acct.body.billing.enabled, acct.body.emailVerified], [email, false, true, false]);
+
+  // Checkout needs a confirmed email; the signup email carries the link.
+  const blocked = await post('/api/v1/billing/checkout', { plan: 'pro' }, auth);
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.code, 'verify_email');
+  const welcome = lastEmailTo(email);
+  assert.equal(welcome.subject, 'Confirm your SiteLens email');
+  assert.equal(welcome.auth, 'Bearer re_test');
+  assert.equal(welcome.from, 'SiteLens <noreply@sitelens.test>');
+  assert.equal((await post('/api/v1/auth/verify', { token: tokenIn(welcome) }, site)).status, 200);
+  assert.equal((await post('/api/v1/auth/verify', { token: tokenIn(welcome) }, site)).status, 400, 'links work once');
+  assert.equal((await get('/api/v1/account', auth)).body.emailVerified, true);
   assert.equal((await get('/api/v1/account', site)).status, 401);
   assert.equal((await post('/api/v1/account/key', {}, auth)).status, 402, 'no key without a plan');
 
@@ -422,4 +454,41 @@ test('admin can grant a plan for manual payments', async () => {
   assert.equal(k.status, 200);
   const r = await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k.body.apiKey });
   assert.equal(r.headers.get('x-plan'), 'starter');
+});
+
+test('email verification resend and password reset', async () => {
+  const site = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.9' };
+  const email = 'forgetful@example.com';
+  const signup = await post('/api/v1/auth/signup', { email, password: 'first password 1', returnTo: 'https://sitelens.example.github.io/SiteLens/#/login' }, site);
+  assert.equal(signup.body.verificationSent, true);
+  const first = lastEmailTo(email);
+  // Links point back to the page the visitor came from (here: a Pages sub-path).
+  assert.match(first.text, /https:\/\/sitelens\.example\.github\.io\/SiteLens\/#\/verify\?token=[0-9a-f]{64}/);
+  assert.match(first.html, /Confirm email/);
+  const auth = { ...site, authorization: `Bearer ${signup.body.token}` };
+  assert.equal((await post('/api/v1/auth/resend-verification', {}, auth)).status, 429, 'resends are throttled');
+
+  // Unknown emails get the same answer and no email.
+  const before = emails.length;
+  const unknown = await post('/api/v1/auth/forgot', { email: 'nobody@example.com' }, site);
+  assert.equal(unknown.status, 200);
+  assert.equal(emails.length, before);
+
+  const forgot = await post('/api/v1/auth/forgot', { email: 'Forgetful@Example.com', returnTo: `http://127.0.0.1:${apiPort}/` }, site);
+  assert.equal(forgot.body.message, unknown.body.message);
+  const resetMail = lastEmailTo(email);
+  assert.equal(resetMail.subject, 'Reset your SiteLens password');
+  const token = tokenIn(resetMail);
+  assert.match(resetMail.text, new RegExp(`http://127\\.0\\.0\\.1:${apiPort}/#/reset\\?token=`));
+
+  assert.equal((await post('/api/v1/auth/reset', { token, password: 'short' }, site)).status, 400);
+  assert.equal((await post('/api/v1/auth/reset', { token: 'f'.repeat(64), password: 'new password 22' }, site)).status, 400);
+  const reset = await post('/api/v1/auth/reset', { token, password: 'new password 22' }, site);
+  assert.equal(reset.status, 200);
+  assert.match(reset.body.token, /^[0-9a-f]{64}$/);
+  assert.equal(reset.body.account.emailVerified, true, 'reset proves the inbox');
+  assert.equal((await post('/api/v1/auth/reset', { token, password: 'another one 333' }, site)).status, 400, 'reset links work once');
+  assert.equal((await get('/api/v1/account', auth)).status, 401, 'old sessions are signed out');
+  assert.equal((await post('/api/v1/auth/login', { email, password: 'first password 1' }, site)).status, 401);
+  assert.equal((await post('/api/v1/auth/login', { email, password: 'new password 22' }, site)).status, 200);
 });

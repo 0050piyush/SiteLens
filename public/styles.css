@@ -314,6 +314,10 @@ pre { background: var(--surface-2); border-radius: 10px; padding: 14px; overflow
 .auth-form { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .form-error { color: var(--bad-ink); font-size: 13px; min-height: 1em; }
 .form-error:empty { display: none; }
+.forgot-link { align-self: flex-end; margin-top: -4px; }
+.forgot-link[hidden] { display: none; }
+.callout.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); }
+.callout .btn { margin-left: 6px; }
 .account .price b { font-size: 26px; letter-spacing: -0.02em; }
 .usage { margin-top: 12px; }
 .usage-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }

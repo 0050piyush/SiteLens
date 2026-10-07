@@ -13,6 +13,8 @@ import { securityAudit } from '../src/audits.js';
 import { classify } from '../src/classify.js';
 import { Cache } from '../src/store.js';
 import { diffSnapshots, signPayload } from '../src/monitors.js';
+import { hashPassword, verifyPassword } from '../src/accounts.js';
+import { verificationEmail, resetEmail } from '../src/mailer.js';
 
 const html = fs.readFileSync(new URL('./fixtures/shop.html', import.meta.url), 'utf8');
 
@@ -190,4 +192,17 @@ test('diffSnapshots reports meaningful changes only', () => {
   const body = '{"event":"site.changed"}';
   assert.equal(signPayload('secret', body), `sha256=${createHmac('sha256', 'secret').update(body).digest('hex')}`);
   assert.notEqual(signPayload('other', body), signPayload('secret', body));
+});
+
+test('password hashing and email templates', () => {
+  const stored = hashPassword('correct horse');
+  assert.match(stored, /^scrypt\$[0-9a-f]{32}\$[0-9a-f]{128}$/);
+  assert.ok(verifyPassword('correct horse', stored));
+  assert.ok(!verifyPassword('wrong horse', stored));
+  assert.ok(!verifyPassword('x', 'garbage'));
+  const link = 'https://x.example/#/reset?token=abc&a=<b>';
+  const r = resetEmail(link);
+  assert.match(r.text, /expires in 1 hour/);
+  assert.ok(r.html.includes('&lt;b&gt;') && !r.html.includes('<b>'), 'links are escaped in HTML');
+  assert.match(verificationEmail('https://x').subject, /Confirm/);
 });

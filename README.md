@@ -108,7 +108,12 @@ curl -X POST https://YOUR-SERVER/api/v1/admin/grant -H "X-Admin-Token: $SITELENS
 # {"plan": null} removes it
 ```
 
-Accounts are stored in `data/users.json`: passwords as scrypt hashes, and sessions and API keys as SHA-256 hashes. **Keep `data/` on persistent storage and back it up.** Some free hosting tiers (Render's free plan, for one) wipe the disk on each deploy, which would delete accounts. Password reset and email verification need an email provider and aren't built yet; for now, reset a password by deleting the account from `users.json` and having the customer sign up again.
+Accounts are stored in `data/users.json`: passwords as scrypt hashes, and sessions and API keys as SHA-256 hashes. **Keep `data/` on persistent storage and back it up.** Some free hosting tiers (Render's free plan, for one) wipe the disk on each deploy, which would delete accounts. **Email (verification and password reset):** new accounts get a "Confirm your email" link (valid for 24 hours), and they must confirm before buying a plan. "Forgot password?" on the login page emails a single-use reset link that's valid for 1 hour. Resetting signs the account out everywhere else, and the reply is the same whether or not the email has an account. To turn email on:
+
+1. Create a free [Resend](https://resend.com) account, verify your sending domain, and create an API key. SendGrid works too.
+2. Set `RESEND_API_KEY` (or `SENDGRID_API_KEY`) and `SITELENS_EMAIL_FROM`, for example `SiteLens <noreply@yourdomain.com>`.
+
+Without email configured, signup still works and verification isn't required, but password reset is unavailable. For local development, `SITELENS_EMAIL_PROVIDER=console` prints emails, links included, to the server log.
 
 ### Bulk analysis (paid)
 
@@ -168,6 +173,8 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | `SITELENS_CONTACT` | none | Where people can get a key (email or URL); shown in 401 responses and on the API page |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | none | Stripe API key and webhook signing secret (see Accounts and payments) |
 | `STRIPE_PRICE_STARTER` / `_PRO` / `_BUSINESS` | none | Stripe price IDs for each plan |
+| `RESEND_API_KEY` or `SENDGRID_API_KEY` | none | Email provider for verification and password-reset emails |
+| `SITELENS_EMAIL_FROM` | none | Sender, e.g. `SiteLens <noreply@yourdomain.com>` (must be verified with the provider) |
 | `SITELENS_ADMIN_TOKEN` | none | Enables `POST /api/v1/admin/grant` for manual payments (16+ characters) |
 | `SITELENS_APP_URL` | request origin | Where Stripe sends customers back to, if not the page that started checkout |
 | `SITELENS_PUBLIC_API` | off | Set `1` to make the API open to everyone (anonymous limits apply) |

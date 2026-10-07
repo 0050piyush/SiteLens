@@ -34,10 +34,10 @@ const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,24}$/i;
  */
 export class Accounts {
   constructor() {
-    this.data = { users: [], sessions: [] };
+    this.data = { users: [], sessions: [], tokens: [] };
     try {
       const raw = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-      if (Array.isArray(raw.users)) this.data = { users: raw.users, sessions: raw.sessions || [] };
+      if (Array.isArray(raw.users)) this.data = { users: raw.users, sessions: raw.sessions || [], tokens: raw.tokens || [] };
     } catch { /* first run */ }
     this.pruneSessions();
   }
@@ -55,6 +55,7 @@ export class Accounts {
   pruneSessions() {
     const now = Date.now();
     this.data.sessions = this.data.sessions.filter((s) => Date.parse(s.expiresAt) > now);
+    this.data.tokens = (this.data.tokens || []).filter((t) => Date.parse(t.expiresAt) > now && !t.usedAt);
   }
 
   byEmail(email) { return this.data.users.find((u) => u.email === String(email).trim().toLowerCase()) || null; }
@@ -73,6 +74,7 @@ export class Accounts {
       id: randomUUID(),
       email: e,
       password: hashPassword(password),
+      emailVerified: false,
       createdAt: new Date().toISOString(),
       plan: null,
       status: null, // Stripe subscription status, or 'manual' for admin grants
@@ -119,6 +121,53 @@ export class Accounts {
     const before = this.data.sessions.length;
     this.data.sessions = this.data.sessions.filter((s) => s.hash !== h);
     if (this.data.sessions.length !== before) this.save();
+  }
+
+  /**
+   * One-time email tokens ("verify" or "reset"). Only a hash is stored, a new
+   * token replaces older unused ones of the same type, and each works once.
+   */
+  createToken(user, type, ttlMs) {
+    const token = randomBytes(32).toString('hex');
+    this.pruneSessions();
+    this.data.tokens = this.data.tokens.filter((t) => !(t.userId === user.id && t.type === type));
+    this.data.tokens.push({ hash: sha256(token), userId: user.id, type, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + ttlMs).toISOString() });
+    this.save();
+    return token;
+  }
+
+  /** When the user's last token of this type was issued (for throttling resends). */
+  lastTokenAt(user, type) {
+    const t = this.data.tokens.filter((x) => x.userId === user.id && x.type === type).at(-1);
+    return t ? Date.parse(t.createdAt) : 0;
+  }
+
+  consumeToken(token, type) {
+    const t = /^[0-9a-f]{64}$/.test(String(token || '')) && this.data.tokens.find((x) => x.hash === sha256(token) && x.type === type);
+    if (!t || t.usedAt || Date.parse(t.expiresAt) <= Date.now()) {
+      throw new HttpError(400, type === 'reset' ? 'This reset link is invalid or has expired. Request a new one.' : 'This confirmation link is invalid or has expired.');
+    }
+    const user = this.byId(t.userId);
+    if (!user) throw new HttpError(400, 'This link is no longer valid.');
+    t.usedAt = new Date().toISOString();
+    this.pruneSessions();
+    this.save();
+    return user;
+  }
+
+  markVerified(user) {
+    user.emailVerified = true;
+    this.save();
+  }
+
+  /** Sets a new password and signs the user out everywhere. */
+  setPassword(user, password) {
+    if (typeof password !== 'string' || password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
+    if (password.length > 200) throw new HttpError(400, 'Password is too long.');
+    user.password = hashPassword(password);
+    this.data.sessions = this.data.sessions.filter((s) => s.userId !== user.id);
+    this.data.tokens = this.data.tokens.filter((t) => !(t.userId === user.id && t.type === 'reset'));
+    this.save();
   }
 
   /** Issues a new API key (replacing any old one). Returns the plain key once. */

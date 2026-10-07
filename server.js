@@ -17,6 +17,7 @@ import {
   billingEnabled, priceFor, createCheckoutSession, createPortalSession, verifyWebhook, applyStripeEvent,
 } from './src/stripe.js';
 import { timingSafeEqual } from 'node:crypto';
+import { emailEnabled, sendEmail, verificationEmail, resetEmail } from './src/mailer.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -356,6 +357,7 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     access: PUBLIC_API ? 'public' : 'API key required (X-API-Key header)',
     accounts: true,
     billing: billingEnabled(),
+    email: emailEnabled(),
     contact: CONTACT,
     limits: { ...LIMITS, freeReportsPerDay: FREE_PER_DAY },
     plans: Object.values(PLANS).map(({ id, name, price, monthly, hourly, bulkMax, monitors: m }) => ({ id, name, price, monthly, hourly, bulkMax, monitors: m })),
@@ -398,6 +400,8 @@ function accountView(user) {
   const owner = `user:${user.id}`;
   return {
     email: user.email,
+    emailVerified: !!user.emailVerified,
+    emailEnabled: emailEnabled(),
     createdAt: user.createdAt,
     plan: plan ? { id: plan.id, name: plan.name, price: plan.price, monthly: plan.monthly, bulkMax: plan.bulkMax, monitors: plan.monitors } : null,
     status: user.status,
@@ -423,12 +427,72 @@ function returnUrlFrom(req, requested) {
   return `${proto}://${host}/`;
 }
 
+const VERIFY_TTL = 24 * 3600 * 1000;
+const RESET_TTL = 3600 * 1000;
+const RESEND_GAP = 60 * 1000;
+
+async function sendVerification(req, user, returnTo) {
+  if (!emailEnabled()) return false;
+  const link = `${returnUrlFrom(req, returnTo)}#/verify?token=${accounts.createToken(user, 'verify', VERIFY_TTL)}`;
+  try {
+    await sendEmail({ to: user.email, ...verificationEmail(link) });
+    return true;
+  } catch (err) {
+    console.error('Verification email failed:', err.message);
+    return false;
+  }
+}
+
 route('POST', '/api/v1/auth/signup', 'requests', async (req, res) => {
   throttleAuth(req);
   const body = await readBody(req, 16 * 1024);
   const user = accounts.signup(body?.email, body?.password);
   const token = accounts.createSession(user);
-  send(res, 201, { token, account: accountView(user) });
+  const verificationSent = await sendVerification(req, user, body?.returnTo);
+  send(res, 201, { token, account: accountView(user), verificationSent });
+});
+
+route('POST', '/api/v1/auth/verify', 'requests', async (req, res) => {
+  throttleAuth(req);
+  const body = await readBody(req, 16 * 1024);
+  const user = accounts.consumeToken(body?.token, 'verify');
+  accounts.markVerified(user);
+  send(res, 200, { verified: true, email: user.email });
+});
+
+route('POST', '/api/v1/auth/resend-verification', 'requests', async (req, res) => {
+  const user = requireUser(req);
+  if (user.emailVerified) return send(res, 200, { sent: false, alreadyVerified: true });
+  if (!emailEnabled()) throw new HttpError(503, 'Email is not set up on this server yet.');
+  if (Date.now() - accounts.lastTokenAt(user, 'verify') < RESEND_GAP) throw new HttpError(429, 'We just sent one. Check your inbox (and spam), or try again in a minute.');
+  const body = await readBody(req, 16 * 1024);
+  const sent = await sendVerification(req, user, body?.returnTo);
+  if (!sent) throw new HttpError(502, 'Could not send the email. Please try again later.');
+  send(res, 200, { sent: true });
+});
+
+route('POST', '/api/v1/auth/forgot', 'requests', async (req, res) => {
+  throttleAuth(req);
+  if (!emailEnabled()) throw new HttpError(503, 'Password reset by email isn\'t available yet. Please contact support.');
+  const body = await readBody(req, 16 * 1024);
+  const user = accounts.byEmail(String(body?.email || ''));
+  // Same answer whether or not the account exists, so this can't be used to probe emails.
+  if (user && Date.now() - accounts.lastTokenAt(user, 'reset') >= RESEND_GAP) {
+    const link = `${returnUrlFrom(req, body?.returnTo)}#/reset?token=${accounts.createToken(user, 'reset', RESET_TTL)}`;
+    try { await sendEmail({ to: user.email, ...resetEmail(link) }); } catch (err) { console.error('Reset email failed:', err.message); }
+  }
+  send(res, 200, { ok: true, message: 'If an account exists for that email, a reset link is on its way. It expires in 1 hour.' });
+});
+
+route('POST', '/api/v1/auth/reset', 'requests', async (req, res) => {
+  throttleAuth(req);
+  const body = await readBody(req, 16 * 1024);
+  if (typeof body?.password !== 'string' || body.password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
+  const user = accounts.consumeToken(body?.token, 'reset');
+  accounts.setPassword(user, body.password);
+  accounts.markVerified(user); // they proved they can read this inbox
+  const token = accounts.createSession(user);
+  send(res, 200, { token, account: accountView(user) });
 });
 
 route('POST', '/api/v1/auth/login', 'requests', async (req, res) => {
@@ -458,6 +522,9 @@ route('POST', '/api/v1/account/key', 'requests', async (req, res) => {
 route('POST', '/api/v1/billing/checkout', 'requests', async (req, res) => {
   const user = requireUser(req);
   if (!billingEnabled()) throw new HttpError(503, 'Online payments are not set up yet.');
+  if (emailEnabled() && !user.emailVerified) {
+    throw new HttpError(403, 'Please confirm your email address first. We sent you a link when you signed up.', { code: 'verify_email' });
+  }
   const body = await readBody(req, 16 * 1024);
   const plan = String(body?.plan || '');
   if (!PLANS[plan] || !priceFor(plan)) throw new HttpError(400, 'Unknown plan');
