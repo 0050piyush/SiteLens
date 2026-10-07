@@ -2,12 +2,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { analyzeDomain, summarize, VERSION } from './src/analyze.js';
+import { analyzeDomain, summarize, toApiReport, VERSION } from './src/analyze.js';
 import { Cache, SiteIndex } from './src/store.js';
 import { normalizeDomain, registrableDomain, HttpError } from './src/util.js';
 import { getRank, trafficEstimate, loadLocalList, downloadList, localListStatus, topSites } from './src/rank.js';
 import { openapi } from './src/openapi.js';
-import { PLANS, DEFAULT_PLAN, FREE_DAILY_REPORTS } from './public/shared/plans.js';
+import { PLANS, DEFAULT_PLAN, FREE_DAILY_REPORTS, WEBSITE_ONLY_DATA, WEBSITE_ONLY_NOTE, API_DATA } from './public/shared/plans.js';
 import { UsageStore } from './src/usage.js';
 import { BulkJobs } from './src/bulk.js';
 import { Monitors, signPayload } from './src/monitors.js';
@@ -95,9 +95,8 @@ function callerOf(req) {
     }
     return { tier: 'invalid' };
   }
-  // Logged-in customers with an active plan use their plan on the website too.
-  const user = accounts.userForSession(sessionTokenOf(req));
-  if (user && accounts.isActive(user)) return { tier: 'key', key: `user:${user.id}`, plan: user.plan, user };
+  // Logged-in users browse the website on the same free terms as everyone:
+  // paid plans cover API access, not the website-only data.
   const host = String(req.headers.host || '').toLowerCase();
   const isOwn = (origin) => !!origin && (ALLOWED_ORIGINS.has(origin) || new URL(origin).host === host);
   const origin = req.headers.origin ? originOf(req.headers.origin) : null;
@@ -128,16 +127,18 @@ setInterval(() => {
 const apiKeyOf = (req) => req.headers['x-api-key'] || new URL(req.url, 'http://x').searchParams.get('api_key') || null;
 const clientIp = (req) => (process.env.SITELENS_TRUST_PROXY === '1' && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
 
-async function getReport(input, { fresh = false } = {}) {
+// `api: true` returns a report without website-only data (and doesn't fetch it).
+async function getReport(input, { fresh = false, api = false } = {}) {
   const allowPort = process.env.SITELENS_ALLOW_PRIVATE === '1';
   const host = normalizeDomain(input, { allowPort });
-  const key = registrableDomain(host.replace(/:\d+$/, '')) + (host.includes(':') ? host.slice(host.indexOf(':')) : '');
+  const base = registrableDomain(host.replace(/:\d+$/, '')) + (host.includes(':') ? host.slice(host.indexOf(':')) : '');
+  const key = api ? `${base}#api` : base;
   if (!fresh) {
-    const hit = cache.get(key);
-    if (hit) { stats.cacheHits++; return { report: hit, cached: true }; }
+    const hit = cache.get(key) || (api && cache.get(base));
+    if (hit) { stats.cacheHits++; return { report: api ? toApiReport(hit) : hit, cached: true }; }
   }
   if (inflight.has(key)) return { report: await inflight.get(key), cached: false };
-  const p = analyzeDomain(host, { index })
+  const p = analyzeDomain(host, { index, api })
     .then((r) => { if (r.reachable) cache.set(key, r); stats.analyses++; return r; })
     .finally(() => inflight.delete(key));
   inflight.set(key, p);
@@ -155,10 +156,11 @@ function planFor(owner) {
 }
 
 const bulk = new BulkJobs({
-  getReport: (domain) => getReport(domain).then((x) => x.report),
+  // Bulk jobs are API-only, so they use API reports.
+  getReport: (domain) => getReport(domain, { api: true }).then((x) => x.report),
   usage,
-  summarizeRow: (report) => ({ ...summarize(report), traffic: report.traffic?.available ? { monthlyVisits: report.traffic.monthlyVisits, low: report.traffic.low, high: report.traffic.high } : null }),
-  csvRow: (report) => reportToCsvRows([report])[1],
+  summarizeRow: (report) => summaryFor(report, true),
+  csvRow: (report) => reportToCsvRows([report], { api: true })[1],
 });
 
 async function sendWebhook(url, payload, secret, event) {
@@ -167,7 +169,7 @@ async function sendWebhook(url, payload, secret, event) {
 }
 
 const monitors = new Monitors({
-  getReport: (domain) => getReport(domain, { fresh: true }).then((x) => x.report),
+  getReport: (domain) => getReport(domain, { fresh: true, api: true }).then((x) => x.report),
   usage,
   planFor,
   sendWebhook,
@@ -233,18 +235,22 @@ function sendCsv(res, filename, rows) {
   res.end(csv);
 }
 
-function reportToCsvRows(reports) {
-  const rows = [['domain', 'title', 'category', 'tranco_rank', 'est_monthly_visits', 'overall', 'performance', 'seo', 'security',
-    'ttfb_ms', 'html_kb', 'tech_count', 'technologies', 'hosting', 'email_provider', 'dns_provider', 'tls_issuer', 'cert_days_left',
-    'domain_created', 'registrar', 'first_archived', 'analyzed_at']];
-  for (const r of reports) {
-    rows.push([r.domain, r.site?.title, r.category?.primary, r.rank?.rank, r.traffic?.monthlyVisits, r.scores.overall, r.scores.performance,
-      r.scores.seo, r.scores.security, r.performance?.metrics?.ttfb, r.performance?.metrics?.htmlKb, r.tech.count,
-      r.tech.list.map((t) => t.name).join('; '), r.dns?.providers?.hosting, r.dns?.providers?.email?.join('; '),
-      r.dns?.providers?.dns?.join('; '), r.tls?.issuer, r.tls?.daysRemaining, r.domainInfo?.rdap?.created, r.domainInfo?.rdap?.registrar,
-      r.domainInfo?.wayback?.firstSeen, r.meta.analyzedAt]);
-  }
-  return rows;
+// CSV export. API exports leave out the website-only columns.
+const CSV_COLUMNS = [
+  ['domain', (r) => r.domain], ['title', (r) => r.site?.title], ['category', (r) => r.category?.primary],
+  ['tranco_rank', (r) => r.rank?.rank, 'website'], ['est_monthly_visits', (r) => r.traffic?.monthlyVisits, 'website'],
+  ['overall', (r) => r.scores.overall], ['performance', (r) => r.scores.performance], ['seo', (r) => r.scores.seo], ['security', (r) => r.scores.security],
+  ['ttfb_ms', (r) => r.performance?.metrics?.ttfb], ['html_kb', (r) => r.performance?.metrics?.htmlKb], ['tech_count', (r) => r.tech.count],
+  ['technologies', (r) => r.tech.list.map((t) => t.name).join('; ')], ['hosting', (r) => r.dns?.providers?.hosting],
+  ['email_provider', (r) => r.dns?.providers?.email?.join('; ')], ['dns_provider', (r) => r.dns?.providers?.dns?.join('; ')],
+  ['tls_issuer', (r) => r.tls?.issuer], ['cert_days_left', (r) => r.tls?.daysRemaining],
+  ['domain_created', (r) => r.domainInfo?.rdap?.created, 'website'], ['registrar', (r) => r.domainInfo?.rdap?.registrar, 'website'],
+  ['first_archived', (r) => r.domainInfo?.wayback?.firstSeen, 'website'], ['analyzed_at', (r) => r.meta.analyzedAt],
+];
+
+function reportToCsvRows(reports, { api = false } = {}) {
+  const cols = CSV_COLUMNS.filter(([, , scope]) => !(api && scope === 'website'));
+  return [cols.map(([name]) => name), ...reports.map((r) => cols.map(([, get]) => get(r)))];
 }
 
 const MIME = {
@@ -277,55 +283,65 @@ function serveStatic(req, res, pathname) {
 const routes = [];
 const route = (method, pattern, kind, handler) => routes.push({ method, re: new RegExp(`^${pattern}$`), kind, handler });
 
-route('GET', '/api/v1/analyze/([^/]+)', 'analyses', async (req, res, [domain], q) => {
-  const { report, cached } = await getReport(domain, { fresh: q.get('fresh') === '1' });
-  if (q.get('format') === 'csv') return sendCsv(res, `${report.domain}.csv`, reportToCsvRows([report]));
+route('GET', '/api/v1/analyze/([^/]+)', 'analyses', async (req, res, [domain], q, caller) => {
+  const api = isApi(caller);
+  const { report, cached } = await getReport(domain, { fresh: q.get('fresh') === '1', api });
+  if (q.get('format') === 'csv') return sendCsv(res, `${report.domain}.csv`, reportToCsvRows([report], { api }));
   const fields = q.get('fields');
   const body = fields ? pick(report, fields.split(',')) : report;
   send(res, report.reachable ? 200 : report.errorStatus || 502, body, { 'x-cache': cached ? 'HIT' : 'MISS' });
 });
 
-route('GET', '/api/v1/summary/([^/]+)', 'analyses', async (req, res, [domain]) => {
-  const { report, cached } = await getReport(domain);
-  send(res, report.reachable ? 200 : report.errorStatus || 502, { ...summarize(report), traffic: report.traffic, reachable: report.reachable, error: report.error }, { 'x-cache': cached ? 'HIT' : 'MISS' });
+route('GET', '/api/v1/summary/([^/]+)', 'analyses', async (req, res, [domain], _q, caller) => {
+  const api = isApi(caller);
+  const { report, cached } = await getReport(domain, { api });
+  send(res, report.reachable ? 200 : report.errorStatus || 502, {
+    ...summaryFor(report, api), ...(api ? { dataScope: report.dataScope } : { traffic: report.traffic }), reachable: report.reachable, error: report.error,
+  }, { 'x-cache': cached ? 'HIT' : 'MISS' });
 });
 
-route('GET', '/api/v1/compare', 'analyses', async (req, res, _m, q) => {
+route('GET', '/api/v1/compare', 'analyses', async (req, res, _m, q, caller) => {
+  const api = isApi(caller);
   const domains = (q.get('domains') || '').split(',').map((d) => d.trim()).filter(Boolean);
   if (domains.length < 2 || domains.length > 5) throw new HttpError(400, 'Pass 2 to 5 comma-separated domains in ?domains=');
-  const results = await Promise.all(domains.map((d) => getReport(d).then((r) => r.report).catch((err) => ({ domain: d, error: err.message, reachable: false }))));
-  if (q.get('format') === 'csv') return sendCsv(res, 'comparison.csv', reportToCsvRows(results.filter((r) => r.scores)));
+  const results = await Promise.all(domains.map((d) => getReport(d, { api }).then((r) => r.report).catch((err) => ({ domain: d, error: err.message, reachable: false }))));
+  if (q.get('format') === 'csv') return sendCsv(res, 'comparison.csv', reportToCsvRows(results.filter((r) => r.scores), { api }));
   send(res, 200, {
     domains: results.map((r) => r.domain),
+    ...(api ? { dataScope: { mode: 'api', note: WEBSITE_ONLY_NOTE } } : {}),
     sites: results.map((r) => (r.scores ? {
-      ...summarize(r),
+      ...summaryFor(r, api),
       reachable: r.reachable,
-      traffic: r.traffic,
       performance: r.performance.metrics,
       providers: r.dns?.providers || null,
       tls: r.tls ? { issuer: r.tls.issuer, protocol: r.tls.protocol, daysRemaining: r.tls.daysRemaining, http2: r.tls.http2 } : null,
-      domainAge: r.domainInfo?.rdap?.ageYears ?? null,
-      firstSeen: r.domainInfo?.wayback?.firstSeen ?? null,
-      rankHistory: r.rank?.history || [],
       socials: r.links?.social || [],
       words: r.content?.wordCount ?? null,
       sitemapUrls: r.files?.sitemap?.urls ?? null,
+      ...(api ? {} : {
+        traffic: r.traffic,
+        domainAge: r.domainInfo?.rdap?.ageYears ?? null,
+        firstSeen: r.domainInfo?.wayback?.firstSeen ?? null,
+        rankHistory: r.rank?.history || [],
+      }),
     } : { domain: r.domain, reachable: false, error: r.error })),
   });
 });
 
-route('GET', '/api/v1/rank/([^/]+)', 'requests', async (req, res, [domain]) => {
+route('GET', '/api/v1/rank/([^/]+)', 'requests', async (req, res, [domain], _q, caller) => {
+  if (isApi(caller)) throw WEBSITE_ONLY_ERROR();
   const d = registrableDomain(normalizeDomain(domain));
   const rank = await getRank(d);
   send(res, 200, { domain: d, ...rank, traffic: trafficEstimate(rank) });
 });
 
-route('GET', '/api/v1/tech/([^/]+)', 'analyses', async (req, res, [domain]) => {
-  const { report } = await getReport(domain);
+route('GET', '/api/v1/tech/([^/]+)', 'analyses', async (req, res, [domain], _q, caller) => {
+  const { report } = await getReport(domain, { api: isApi(caller) });
   send(res, 200, { domain: report.domain, ...report.tech });
 });
 
-route('GET', '/api/v1/top', 'requests', async (req, res, _m, q) => {
+route('GET', '/api/v1/top', 'requests', async (req, res, _m, q, caller) => {
+  if (isApi(caller)) throw WEBSITE_ONLY_ERROR();
   const limit = Math.min(1000, Math.max(1, Number(q.get('limit') || 100)));
   const offset = Math.max(0, Number(q.get('offset') || 0));
   const list = topSites(limit, offset);
@@ -335,16 +351,21 @@ route('GET', '/api/v1/top', 'requests', async (req, res, _m, q) => {
   send(res, 200, { source: 'Tranco', ...localListStatus(), sites: list.map((s) => ({ ...s, indexed: index.get(s.domain) })) });
 });
 
-route('GET', '/api/v1/recent', 'requests', async (req, res, _m, q) => {
-  send(res, 200, { sites: index.recent(Math.min(50, Number(q.get('limit') || 12))) });
+route('GET', '/api/v1/recent', 'requests', async (req, res, _m, q, caller) => {
+  const sites = index.recent(Math.min(50, Number(q.get('limit') || 12)));
+  send(res, 200, { sites: isApi(caller) ? sites.map(stripRank) : sites });
 });
 
-route('GET', '/api/v1/leaderboard', 'requests', async (req, res, _m, q) => {
+route('GET', '/api/v1/leaderboard', 'requests', async (req, res, _m, q, caller) => {
+  const api = isApi(caller);
+  let sort = q.get('sort') || (api ? 'score' : 'rank');
+  if (api && sort === 'rank') sort = 'score'; // rank is website-only data
+  const sites = index.leaderboard({ category: q.get('category'), sort, limit: Math.min(200, Number(q.get('limit') || 50)) });
   send(res, 200, {
-    sort: q.get('sort') || 'rank',
+    sort,
     category: q.get('category') || null,
     categories: index.categories(),
-    sites: index.leaderboard({ category: q.get('category'), sort: q.get('sort') || 'rank', limit: Math.min(200, Number(q.get('limit') || 50)) }),
+    sites: api ? sites.map(stripRank) : sites,
   });
 });
 
@@ -365,6 +386,7 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     email: emailEnabled(),
     contact: CONTACT,
     limits: { ...LIMITS, freeReportsPerDay: FREE_PER_DAY },
+    dataPolicy: { websiteOnly: WEBSITE_ONLY_DATA, api: API_DATA, note: WEBSITE_ONLY_NOTE },
     plans: Object.values(PLANS).map(({ id, name, price, monthly, hourly, bulkMax, monitors: m }) => ({ id, name, price, monthly, hourly, bulkMax, monitors: m })),
   });
 });
@@ -646,7 +668,7 @@ route('GET', '/api/v1/bulk/([^/]+)', 'requests', async (req, res, [id], q, calle
   const job = bulk.get(id, caller.key);
   if (!job) throw new HttpError(404, 'No such bulk job (jobs are kept for 24 hours).');
   if (q.get('format') === 'csv') {
-    const header = reportToCsvRows([])[0];
+    const header = reportToCsvRows([], { api: true })[0];
     return sendCsv(res, `sitelens-bulk-${id.slice(0, 8)}.csv`, [header, ...job.csvRows.filter(Boolean)]);
   }
   send(res, 200, bulk.view(job));
@@ -700,6 +722,18 @@ route('POST', '/api/v1/monitors/([^/]+)/test', 'requests', async (req, res, [id]
 });
 
 route('GET', '/api/openapi.json', 'requests', async (req, res) => send(res, 200, openapi(VERSION)));
+
+const isApi = (caller) => caller?.tier === 'key';
+const WEBSITE_ONLY_ERROR = () => new HttpError(403,
+  'Global rank and traffic estimates are available on the free SiteLens website only. They come from third-party data licensed for non-commercial use, so API plans do not include them.',
+  { code: 'website_only' });
+function summaryFor(report, api) {
+  const s = summarize(report);
+  if (!api) return s;
+  const { rank: _rank, monthlyVisits: _visits, ...rest } = s;
+  return rest;
+}
+const stripRank = ({ rank: _rank, monthlyVisits: _visits, ...rest }) => rest;
 
 function pick(obj, fields) {
   const out = { domain: obj.domain };
@@ -762,7 +796,7 @@ const server = http.createServer(async (req, res) => {
       if (used + cost > FREE_PER_DAY) {
         res.setHeader('x-free-remaining', Math.max(0, FREE_PER_DAY - used));
         return send(res, 429, {
-          error: `Daily free limit reached (${FREE_PER_DAY} reports a day). It resets at midnight UTC, or get an API plan for more.`,
+          error: `Daily free limit reached (${FREE_PER_DAY} reports a day). It resets at midnight UTC. For automated or high-volume use, see our API plans.`,
           upgrade: true, limit: FREE_PER_DAY, resetsAt: tomorrowIso(),
         });
       }

@@ -25,3 +25,23 @@ export const DEFAULT_PLAN = 'starter';
 
 // The free website (no key): full reports per visitor per day (UTC).
 export const FREE_DAILY_REPORTS = 10;
+
+// Data that comes from third-party datasets licensed for non-commercial or
+// research use. It is shown on the free website only and is never part of
+// paid API plans (the server strips it and doesn't fetch it for API calls).
+export const WEBSITE_ONLY_DATA = [
+  { id: 'popularity', label: 'Global rank & traffic estimates', source: 'Tranco list (includes Cloudflare Radar data, CC BY-NC 4.0)' },
+  { id: 'registration', label: 'Domain registration details', source: 'RDAP registries (restrict commercial reuse)' },
+  { id: 'archive', label: 'Archive history', source: 'Internet Archive (scholarship and research use)' },
+];
+
+// What paid API plans include: SiteLens's own live analysis.
+export const API_DATA = [
+  'Technology stack (180+ fingerprints)',
+  'SEO, performance & security audits',
+  'DNS, hosting, email & SaaS footprint',
+  'TLS certificate & HTTP details',
+  'Content, links, socials & robots.txt / ads.txt',
+];
+
+export const WEBSITE_ONLY_NOTE = 'Global rank, traffic estimates, registration and archive history come from third-party data licensed for non-commercial use, so they are available on the free website only and are not part of paid API plans.';

@@ -74,6 +74,17 @@ The API is **not** open to the public. Requests are allowed when:
 - they come from **SiteLens's own website**: the same origin as the server, or an origin listed in `SITELENS_ALLOWED_ORIGINS` (such as your GitHub Pages site). Website visitors get **10 full reports a day** per IP (`SITELENS_FREE_PER_DAY`); failed lookups don't count, and the site shows an upgrade screen at the limit; or
 - they send a valid **API key** in the `X-API-Key` header (or `?api_key=`). Each key belongs to a plan, which sets its limits.
 
+### What's free and what's paid
+
+Some data comes from third-party datasets licensed for non-commercial or research use:
+- global rank and traffic estimates (the Tranco list, which includes Cloudflare Radar data under CC BY-NC 4.0)
+- domain registration (RDAP registries)
+- archive history (the Internet Archive)
+
+That data is shown **only on the free website**. **Paid API plans sell only SiteLens's own live analysis:** tech stack, SEO, performance and security audits, DNS, hosting, email, SaaS and TLS data, plus bulk analysis and monitoring.
+
+The server enforces this. API-key requests never fetch the restricted sources, their responses and CSVs leave those fields and columns out (with a `dataScope` note explaining why), and `/api/v1/rank` and `/api/v1/top` return `403 website_only` to API keys. Logged-in customers use the website on the same free terms as everyone else. The lists live in `public/shared/plans.js` (`WEBSITE_ONLY_DATA`, `API_DATA`). If you later get commercial permission from a source, remove it from `WEBSITE_ONLY_DATA`.
+
 ### Plans
 
 | Plan | Price | Analyses / month | Burst / hour | Bulk job size | Monitors |

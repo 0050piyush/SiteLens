@@ -305,6 +305,8 @@ pre { background: var(--surface-2); border-radius: 10px; padding: 14px; overflow
 .plan-features li.no::before { content: '✕'; color: var(--muted); }
 .plan-cta { width: 100%; }
 .btn.disabled { opacity: 0.55; cursor: default; pointer-events: none; }
+.matrix td:nth-child(2), .matrix td:nth-child(3), .matrix th:nth-child(2), .matrix th:nth-child(3) { text-align: center; }
+.matrix tr.website-only td:first-child::after { content: ' · website only'; color: var(--muted); font-size: 12px; }
 .faq { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--ink-2); }
 
 /* accounts */

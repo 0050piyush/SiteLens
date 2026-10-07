@@ -23,7 +23,7 @@ export function openapi(version) {
       '/api/v1/analyze/{domain}': {
         get: {
           summary: 'Full report for a domain',
-          description: 'Runs (or returns a cached) full analysis. Cached for 6 hours; pass fresh=1 to re-run.',
+          description: 'Runs (or returns a cached) analysis. Cached for 6 hours; pass fresh=1 to re-run. API-key responses contain SiteLens\'s own live analysis and omit rank, traffic, domainInfo (registration/archive) and include a dataScope object explaining why; those fields are available on the free website only.',
           parameters: [
             domainParam,
             { name: 'fresh', in: 'query', schema: { type: 'string', enum: ['1'] } },
@@ -44,11 +44,12 @@ export function openapi(version) {
           responses: { 200: { description: 'Comparison' }, 400: err },
         },
       },
-      '/api/v1/rank/{domain}': { get: { summary: 'Tranco rank, 30-day rank history and traffic estimate (fast, no crawl)', parameters: [domainParam], responses: { 200: { description: 'Rank' } } } },
+      '/api/v1/rank/{domain}': { get: { 'x-website-only': true, summary: 'Tranco rank, 30-day rank history and traffic estimate (free website only; API keys get 403)', parameters: [domainParam], responses: { 200: { description: 'Rank' } } } },
       '/api/v1/tech/{domain}': { get: { summary: 'Detected technologies grouped by category', parameters: [domainParam], responses: { 200: { description: 'Technologies' } } } },
       '/api/v1/top': {
         get: {
-          summary: 'Top sites from the Tranco list',
+          'x-website-only': true,
+          summary: 'Top sites from the Tranco list (free website only; API keys get 403)',
           parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', maximum: 1000 } }, { name: 'offset', in: 'query', schema: { type: 'integer' } }],
           responses: { 200: { description: 'Top sites' }, 503: err },
         },

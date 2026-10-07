@@ -1,7 +1,7 @@
 import { h, safeUrl, ext } from './dom.js';
 import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './charts.js';
 import { API_BASE, CONTACT } from './config.js';
-import { PLANS, FREE_DAILY_REPORTS } from './shared/plans.js';
+import { PLANS, FREE_DAILY_REPORTS, WEBSITE_ONLY_DATA, WEBSITE_ONLY_NOTE } from './shared/plans.js';
 import { analyzeLite } from './lite.js';
 import { aboutView, faqView, contactView, privacyView, termsView, sitemapView } from './pages.js';
 
@@ -735,8 +735,8 @@ function similarView(r) {
 function apiSnippet(domain) {
   const base = API_BASE || location.origin;
   return h('div', { class: 'card' },
-    h('p', { style: { marginTop: 0 } }, 'Everything on this page is available as JSON to API customers, from $15/month. ', h('a', { href: '#/pricing' }, 'See pricing →'), ' · ', h('a', { href: '#/api' }, 'API docs')),
-    h('pre', null, `curl -H "X-API-Key: YOUR_KEY" ${base}/api/v1/analyze/${domain}\ncurl -H "X-API-Key: YOUR_KEY" "${base}/api/v1/analyze/${domain}?fields=scores,traffic.monthlyVisits,tech.list"`));
+    h('p', { style: { marginTop: 0 } }, 'The tech stack, audits, DNS, hosting and TLS data on this page are available as JSON to API customers, from $15/month. ', h('a', { href: '#/pricing' }, 'See pricing →'), ' · ', h('a', { href: '#/api' }, 'API docs')),
+    h('pre', null, `curl -H "X-API-Key: YOUR_KEY" ${base}/api/v1/analyze/${domain}\ncurl -H "X-API-Key: YOUR_KEY" "${base}/api/v1/analyze/${domain}?fields=scores,tech.list,dns.providers"`));
 }
 
 function downloadJson(r) {
@@ -1089,6 +1089,7 @@ async function apiView() {
       if (method === 'get' && !p.includes('{id}') && !p.startsWith('/api/v1/account') && !op['x-paid']) select.append(h('option', { value: p }, `GET ${p}`));
       return h('div', { class: 'endpoint' }, h('span', { class: `method m-${method}` }, method.toUpperCase()), h('code', null, p),
         op['x-paid'] ? h('span', { class: 'chip' }, 'Paid plans') : null,
+        op['x-website-only'] ? h('span', { class: 'chip' }, 'Website only') : null,
         h('span', { class: 'muted small', style: { flexBasis: '100%' } }, op.summary));
     })));
     statusBox.replaceChildren(h('dl', { class: 'kv' },
@@ -1137,11 +1138,12 @@ async function pricingView() {
       h('ul', { class: 'plan-features' },
         h('li', null, h('b', null, fmt(p.monthly)), ' API analyses / month'),
         h('li', null, `Up to ${fmt(p.hourly)} per hour`),
-        h('li', null, 'Full reports: traffic, tech, SEO, performance, security'),
-        h('li', null, 'Compare, rank, tech and CSV endpoints'),
+        h('li', null, 'Tech stack, SEO, performance & security audits'),
+        h('li', null, 'DNS, hosting, email, SaaS & TLS data'),
         h('li', null, h('b', null, 'Bulk analysis'), ` of up to ${fmt(p.bulkMax)} domains per job (JSON or CSV)`),
         h('li', null, h('b', null, `${fmt(p.monitors)} site monitors`), ' with change alerts by webhook'),
-        p.id === 'business' ? h('li', null, 'Priority email support') : null),
+        p.id === 'business' ? h('li', null, 'Priority email support') : null,
+        h('li', { class: 'no' }, 'Rank, traffic & domain history (website only)')),
       cta);
   };
   const view = h('div', null,
@@ -1154,12 +1156,15 @@ async function pricingView() {
         h('div', { class: 'price' }, h('b', null, 'Free')),
         h('p', { class: 'muted small plan-blurb' }, 'Use SiteLens in your browser.'),
         h('ul', { class: 'plan-features' },
-          h('li', null, `${FREE_DAILY_REPORTS} full reports a day on the website`),
-          h('li', null, 'Compare up to 5 sites'),
-          h('li', null, 'Watchlist, recent searches, saved results'),
+          h('li', null, `${FREE_DAILY_REPORTS} full reports a day`),
+          h('li', null, h('b', null, 'Global rank & traffic estimates')),
+          h('li', null, 'Domain registration & archive history'),
+          h('li', null, 'Tech stack, SEO, performance & security audits'),
+          h('li', null, 'Compare up to 5 sites, watchlist, saved results'),
           h('li', { class: 'no' }, 'No API access')),
         h('a', { class: 'btn plan-cta', href: '#/' }, 'Start analyzing')),
       Object.values(PLANS).map(planCard)),
+    featureMatrix(),
     h('p', { class: 'muted small pricing-terms' }, 'Plans are billed monthly through Stripe and renew until cancelled. Cancel anytime from your account. By subscribing you agree to our ',
       h('a', { href: '#/terms' }, 'Terms of Service'), ' and ', h('a', { href: '#/privacy' }, 'Privacy policy'), '.'),
     h('div', { class: 'section grid g2' },
@@ -1174,7 +1179,7 @@ async function pricingView() {
         h('h3', null, 'Why it costs less'),
         h('p', { class: 'muted small', style: { marginTop: '8px' } },
           'Incumbent traffic-intelligence APIs are usually sold through sales teams and bundled into five-figure annual contracts. ',
-          'SiteLens is built on open data sources and live checks, so we can offer a self-serve API from $15 a month.'),
+          'Paid plans are built on SiteLens’s own live analysis of each website, so we can offer a self-serve API from $15 a month.'),
         h('p', { class: 'muted small' },
           'SiteLens does not have clickstream panel data, so it does not report traffic sources, referrals or demographics. Visit numbers are model estimates with ranges.'))));
 
@@ -1206,6 +1211,32 @@ async function pricingView() {
       cta.textContent = 'Coming soon';
     }
   }
+}
+
+/** Which data is on the free website vs. paid API plans. */
+function featureMatrix() {
+  const yes = () => h('td', { class: 'yes' }, '✓');
+  const no = (why) => h('td', { class: 'no', title: why || null }, '—');
+  const txt = (t) => h('td', { class: 'small' }, t);
+  const websiteOnly = new Set(WEBSITE_ONLY_DATA.map((d) => d.label));
+  const rows = [
+    ...WEBSITE_ONLY_DATA.map((d) => [d.label, yes(), no('Third-party data licensed for non-commercial use')]),
+    ['Technology stack (180+ fingerprints)', yes(), yes()],
+    ['SEO, performance & security audits', yes(), yes()],
+    ['DNS, hosting, email & SaaS footprint', yes(), yes()],
+    ['TLS certificate & HTTP details', yes(), yes()],
+    ['Compare sites', txt('Up to 5 at once'), txt('Up to 5 per request')],
+    ['Bulk analysis', no(), txt('Up to 100–1,000 domains per job')],
+    ['Monitoring & webhook alerts', no(), txt('5–250 sites')],
+    ['JSON & CSV export', txt('Per report'), txt('Every endpoint')],
+    ['Volume', txt(`${FREE_DAILY_REPORTS} reports a day`), txt('1,000–50,000 analyses a month')],
+  ];
+  return h('div', { class: 'section card' },
+    h('div', { class: 'card-head' }, h('div', null, h('h2', null, 'What’s included where'),
+      h('p', { class: 'muted small' }, WEBSITE_ONLY_NOTE))),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'matrix' },
+      h('thead', null, h('tr', null, h('th', null, 'Feature'), h('th', null, 'Free website'), h('th', null, 'API plans'))),
+      h('tbody', null, rows.map(([label, a, b]) => h('tr', { class: websiteOnly.has(label) ? 'website-only' : null }, h('td', null, label), a, b))))));
 }
 
 // ---- accounts ----------------------------------------------------------------------
@@ -1485,7 +1516,7 @@ async function accountView(params) {
             currentKey,
             keyBox,
             h('pre', { style: { marginTop: '12px' } }, `curl -H "X-API-Key: YOUR_KEY" \\\n  ${base}/api/v1/analyze/stripe.com`),
-            h('p', { class: 'muted small' }, 'While logged in, the website also uses your plan instead of the free daily limit. ', h('a', { href: '#/api' }, 'API docs →')))
+            h('p', { class: 'muted small' }, 'API responses include SiteLens’s own live analysis. Global rank, traffic estimates and domain history stay on the free website. ', h('a', { href: '#/api' }, 'API docs →')))
           : h('p', { class: 'muted small' }, 'Your API key appears here once you have a plan.')))));
 }
 

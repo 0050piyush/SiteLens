@@ -9,6 +9,8 @@ import { rdapInfo, waybackInfo, siteFiles } from './external.js';
 import { classify, audienceSignals } from './classify.js';
 import { normalizeDomain, registrableDomain, safe, withTimeout, HttpError } from './util.js';
 
+import { WEBSITE_ONLY_DATA, WEBSITE_ONLY_NOTE } from '../public/shared/plans.js';
+
 export const VERSION = '1.0.0';
 
 async function fetchHomepage(host) {
@@ -40,7 +42,28 @@ function topicWords(extract) {
 }
 
 /** Runs every analyzer for one domain and assembles the report. */
-export async function analyzeDomain(input, { index } = {}) {
+/**
+ * Strips data that comes from non-commercially licensed sources (rank and
+ * traffic from Tranco, RDAP registration, Internet Archive history) so the
+ * report can be returned to paid API callers.
+ */
+export function toApiReport(report) {
+  if (!report || report.dataScope?.mode === 'api') return report;
+  const { rank: _rank, traffic: _traffic, domainInfo: _domainInfo, similar, ...rest } = report;
+  return {
+    ...rest,
+    similar: (similar || []).map(({ rank: _r, ...s }) => s),
+    dataScope: API_SCOPE,
+  };
+}
+
+const API_SCOPE = {
+  mode: 'api',
+  excluded: WEBSITE_ONLY_DATA.map((d) => d.id),
+  note: WEBSITE_ONLY_NOTE,
+};
+
+export async function analyzeDomain(input, { index, api = false } = {}) {
   const started = Date.now();
   const allowPort = process.env.SITELENS_ALLOW_PRIVATE === '1';
   const host = normalizeDomain(input, { allowPort });
@@ -50,9 +73,10 @@ export async function analyzeDomain(input, { index } = {}) {
   // Network-bound lookups that do not depend on the homepage start right away.
   const isLocal = bareHost === 'localhost' || /^[\d.]+$|:/.test(bareHost);
   const dnsP = isLocal ? Promise.resolve(null) : withTimeout(safe(() => dnsInfo(domain)), 12000, { error: 'DNS lookup timed out' });
-  const rankP = withTimeout(safe(() => getRank(domain)), 15000, null);
-  const rdapP = withTimeout(safe(() => rdapInfo(domain)), 12000, null);
-  const waybackP = withTimeout(safe(() => waybackInfo(domain)), 12000, null);
+  // API reports never fetch the non-commercially licensed sources.
+  const rankP = api ? Promise.resolve(null) : withTimeout(safe(() => getRank(domain)), 15000, null);
+  const rdapP = api ? Promise.resolve(null) : withTimeout(safe(() => rdapInfo(domain)), 12000, null);
+  const waybackP = api ? Promise.resolve(null) : withTimeout(safe(() => waybackInfo(domain)), 12000, null);
 
   let page;
   try {
@@ -166,6 +190,7 @@ export async function analyzeDomain(input, { index } = {}) {
     meta: { analyzedAt: new Date().toISOString(), durationMs: Date.now() - started, version: VERSION },
   };
 
+  if (api) return toApiReport(report);
   if (index && report.reachable) {
     const summary = summarize(report);
     report.similar = index.similar(summary);

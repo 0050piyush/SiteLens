@@ -151,6 +151,9 @@ test('csv export, recent list, leaderboard, status and openapi', async () => {
   const csv = await get(`/api/v1/analyze/localhost:${sitePort}?format=csv`);
   assert.match(csv.headers.get('content-type'), /text\/csv/);
   assert.match(csv.body.split('\n')[0], /^domain,title,category/);
+  // API analyses stay private; website analyses appear in "Recently analyzed".
+  assert.equal((await get('/api/v1/recent')).body.sites.length, 0);
+  await get(`/api/v1/analyze/localhost:${sitePort}`, { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.30' });
   const recent = await get('/api/v1/recent');
   assert.equal(recent.body.sites[0].domain, 'localhost');
   const lb = await get('/api/v1/leaderboard?sort=score');
@@ -422,10 +425,10 @@ test('accounts: signup, login, Stripe checkout, webhook activation, API key, por
   assert.equal(used.headers.get('x-plan'), 'pro');
   await new Promise((r) => setTimeout(r, 50));
   assert.equal((await get('/api/v1/account', auth)).body.usage.used, 2, 'one call with each key');
-  // Logged-in paying users aren't held to the free daily website limit.
+  // On the website, logged-in customers use the same free terms as everyone.
   const viaSite = await get(`/api/v1/summary/localhost:${sitePort}`, auth);
-  assert.equal(viaSite.headers.get('x-plan'), 'pro');
-  assert.equal(viaSite.headers.get('x-free-limit'), null);
+  assert.equal(viaSite.headers.get('x-plan'), null);
+  assert.equal(viaSite.headers.get('x-free-limit'), '5');
 
   // Billing portal.
   const portal = await post('/api/v1/billing/portal', { returnTo: `http://127.0.0.1:${apiPort}/` }, auth);
@@ -521,4 +524,50 @@ test('contact form: validation, honeypot, forwarding and rate limit', async () =
   assert.equal((await post('/api/v1/contact', msg, {})).status, 401);
   const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'messages.json'), 'utf8')).messages;
   assert.equal(saved.at(-1).email, 'asha@example.com');
+});
+
+test('paid API responses never include website-only data', async () => {
+  const target = `localhost:${sitePort}`;
+  const site = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.31' };
+  const web = await get(`/api/v1/analyze/${target}?fresh=1`, site);
+  for (const k of ['rank', 'traffic', 'domainInfo']) assert.ok(k in web.body, `website report has ${k}`);
+  assert.equal(web.body.dataScope, undefined);
+
+  const apiRep = await get(`/api/v1/analyze/${target}`);
+  for (const k of ['rank', 'traffic', 'domainInfo']) assert.ok(!(k in apiRep.body), `API report has no ${k}`);
+  assert.equal(apiRep.body.dataScope.mode, 'api');
+  assert.deepEqual(apiRep.body.dataScope.excluded, ['popularity', 'registration', 'archive']);
+  assert.ok(apiRep.body.tech.count > 0, 'own analysis is still there');
+  assert.ok(apiRep.body.seo && apiRep.body.security && apiRep.body.performance);
+  // Even ?fields= can't reach them.
+  assert.deepEqual(Object.keys((await get(`/api/v1/analyze/${target}?fields=rank,traffic,scores`)).body).sort(), ['domain', 'scores']);
+
+  const csvHead = (await get(`/api/v1/analyze/${target}?format=csv`)).body.split('\n')[0];
+  for (const col of ['tranco_rank', 'est_monthly_visits', 'domain_created', 'registrar', 'first_archived']) assert.ok(!csvHead.includes(col), col);
+  assert.match((await get(`/api/v1/analyze/${target}?format=csv`, site)).body.split('\n')[0], /tranco_rank/);
+
+  const sum = await get(`/api/v1/summary/${target}`);
+  assert.ok(!('rank' in sum.body) && !('monthlyVisits' in sum.body) && !('traffic' in sum.body));
+
+  const cmp = await get(`/api/v1/compare?domains=${target},${target}`);
+  for (const k of ['rank', 'monthlyVisits', 'traffic', 'domainAge', 'firstSeen', 'rankHistory']) assert.ok(!(k in cmp.body.sites[0]), k);
+
+  for (const p of ['/api/v1/rank/example.com', '/api/v1/top']) {
+    const r = await get(p);
+    assert.equal(r.status, 403, p);
+    assert.equal(r.body.code, 'website_only');
+  }
+  assert.equal((await get('/api/v1/rank/example.com', site)).status, 200, 'the website still gets rank');
+
+  const lb = await get('/api/v1/leaderboard?sort=rank');
+  assert.equal(lb.body.sort, 'score');
+  assert.ok(lb.body.sites.every((x) => !('rank' in x)));
+
+  const job = await post('/api/v1/bulk', { domains: [target] });
+  const done = await until(async () => { const r = await get(job.body.poll); return r.body.status === 'completed' && r.body; });
+  assert.ok(!('rank' in done.results[0]) && !('monthlyVisits' in done.results[0]));
+  assert.doesNotMatch((await get(`${job.body.poll}?format=csv`)).body.split('\n')[0], /tranco_rank/);
+
+  const status = await get('/api/v1/status');
+  assert.equal(status.body.dataPolicy.websiteOnly.length, 3);
 });

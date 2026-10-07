@@ -2,7 +2,7 @@
 // Each view receives `ctx` from app.js: { render, api, hasBackend, contactHref, fmt, CONTACT }.
 
 import { h, ext } from './dom.js';
-import { PLANS, FREE_DAILY_REPORTS } from './shared/plans.js';
+import { PLANS, FREE_DAILY_REPORTS, WEBSITE_ONLY_NOTE } from './shared/plans.js';
 
 const SITE = 'SiteLens';
 const UPDATED = 'October 7, 2026';
@@ -38,7 +38,7 @@ export function aboutView(ctx) {
           ['Health audits', 'Live performance timings plus SEO and security checks, each graded with every check explained.'],
           ['Business signals', 'Email and DNS providers, SaaS tools verified on the domain, ad sellers, social profiles and domain history.'],
           ['Compare & monitor', 'Put up to five sites side by side, watch sites for changes, and get alerts by webhook.'],
-          ['Open API', `Everything on the site as JSON, with bulk analysis and monitoring, from $${plans()[0].price}/month.`],
+          ['Open API', `SiteLens’s own live analysis as JSON, with bulk analysis and monitoring, from $${plans()[0].price}/month. Rank and traffic estimates stay on the free website.`],
         ].map(([t, d]) => h('div', { class: 'card' }, h('h3', null, t), h('p', { class: 'muted small', style: { margin: '6px 0 0' } }, d))))),
     section('How it works',
       h('ol', { class: 'steps-list' },
@@ -51,6 +51,7 @@ export function aboutView(ctx) {
         h('span', null, h('b', null, 'Honest numbers. '), 'We don’t buy clickstream panels, so we don’t claim traffic sources or demographics. What we show, we can explain.'),
         h('span', null, h('b', null, 'Live, not stale. '), 'Reports are generated when you ask, from the site itself.'),
         h('span', null, h('b', null, 'Fair pricing. '), `The website is free (${FREE_DAILY_REPORTS} full reports a day). API plans: ${priceList()}. No contracts.`),
+        h('span', null, h('b', null, 'Respect for our sources. '), 'Rank, traffic estimates, registration and archive history come from datasets licensed for non-commercial or research use, so we offer them free on the website and never sell them in API plans.'),
         h('span', null, h('b', null, 'Privacy-friendly. '), 'No ads, no tracking cookies, no third-party analytics. See our ', h('a', { href: '#/privacy' }, 'privacy policy'), '.'),
       ])),
     section('Data sources & credits',
@@ -69,7 +70,7 @@ function faqItems() {
   return [
     ['General', [
       ['What is SiteLens?', `${SITE} analyzes any website and shows its popularity, estimated traffic, technology stack, performance, SEO, security, hosting and history in one report. You can compare sites, watch them for changes, and use the same data through our API.`],
-      ['Is SiteLens free?', `Yes. The website is free, with ${FREE_DAILY_REPORTS} full reports a day per visitor. Results you have already opened, and your recent searches, stay available instantly. The API (for your own apps and scripts) is paid: ${priceList()}.`],
+      ['Is SiteLens free?', `Yes. The website is free, with ${FREE_DAILY_REPORTS} full reports a day per visitor, including global rank, traffic estimates and domain history. Results you have already opened, and your recent searches, stay available instantly. The API (for your own apps and scripts) is paid: ${priceList()}.`],
       ['How accurate are the traffic numbers?', 'Monthly visits are estimates. We model them from a site’s Tranco rank using a published formula, and show a low–high range and a confidence level. They are good for comparing sites and spotting trends, not for exact figures. For sites outside the top 1 million we show “< 10K” rather than inventing a number.'],
       ['Where does the data come from?', 'Most of each report comes from live checks of the website itself: its homepage, headers, DNS, TLS certificate and public files like robots.txt. Popularity comes from the Tranco research list, domain registration from RDAP, and history from the Internet Archive.'],
       ['Why don’t you show traffic sources or demographics?', 'Those numbers come from paid clickstream panels that track people’s browsing. We don’t buy or use that kind of data, so we don’t show it. We’d rather show less than make things up.'],
@@ -78,6 +79,7 @@ function faqItems() {
     ]],
     ['Plans & API', [
       ['How do I get an API key?', 'Create an account, choose a plan on the Pricing page and pay securely through Stripe. Then click “Create API key” on your Account page. The key is shown once, so copy it somewhere safe.'],
+      ['Why don’t API plans include rank and traffic estimates?', `${WEBSITE_ONLY_NOTE} API plans include everything SiteLens measures itself: technology stack, SEO, performance and security audits, DNS, hosting, email, SaaS and TLS data, plus bulk analysis and monitoring.`],
       ['What counts as an analysis?', 'Each successful report for one website. Comparing 3 sites counts 3, a bulk job counts one per site, and each monitor check counts one. Failed requests (invalid or unreachable domains) are free.'],
       ['What happens if I reach my limit?', 'The API returns HTTP 429 with a clear message until your monthly quota resets on the 1st (UTC). You can upgrade anytime from “Manage billing” on your Account page.'],
       ['Can I change or cancel my plan?', 'Yes, anytime, from “Manage billing” on your Account page. Upgrades apply right away. If you cancel, your plan stays active until the end of the period you paid for.'],
@@ -268,7 +270,8 @@ export function termsView(ctx) {
       p('You must be at least 16 years old to use the Service.')),
     section('2. The Service',
       p(`${SITE} analyzes publicly available information about websites: their homepages, public files (such as robots.txt and sitemaps), DNS records, TLS certificates, and open data sources (such as the Tranco list, RDAP registries and the Internet Archive). We may add, change or remove features over time.`),
-      p(`The website is free to use within a fair-use allowance (currently ${FREE_DAILY_REPORTS} full reports per visitor per day). API access requires a paid plan.`)),
+      p(`The website is free to use within a fair-use allowance (currently ${FREE_DAILY_REPORTS} full reports per visitor per day). API access requires a paid plan.`),
+      p('Some data comes from third-party datasets licensed for non-commercial or research use: global rank and traffic estimates (from the Tranco list), domain registration details (from RDAP registries) and archive history (from the Internet Archive). This data is provided free on the website for non-commercial use only. It is not part of paid plans, and you may not extract it from the website for commercial purposes.')),
     section('3. Accounts',
       ul([
         'Give us a valid email address and keep your login details secure. You are responsible for activity on your account.',
