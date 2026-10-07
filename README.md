@@ -40,6 +40,16 @@ With Docker:
 docker build -t sitelens . && docker run -p 8080:8080 -v sitelens-data:/app/data sitelens
 ```
 
+### GitHub Pages
+
+The repo includes a workflow (`.github/workflows/pages.yml`) that publishes the frontend to Pages on every push to `main`.
+
+1. The repo must be **public**, unless your GitHub plan includes Pages for private repos.
+2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+3. Re-run the "Deploy to GitHub Pages" workflow, or push a commit.
+
+Pages can only host static files, so by default the site runs in **lite mode**, entirely in the visitor's browser. It shows rank, traffic estimate, DNS, hosting, email and SaaS footprint, email security, registration and archive history, and it supports comparisons. For full reports (tech stack, SEO, performance, security headers), run the server somewhere (Hostinger, Render, a VPS…) and set the repository variable **`SITELENS_API_URL`** (Settings → Secrets and variables → Actions → Variables), for example `https://api.example.com`. The next deploy points the Pages site at that API.
+
 ### Hostinger (Business or Cloud plans)
 
 1. hPanel → **Websites → Add Website → Node.js Apps → Import Git Repository**, then pick this repo.
@@ -108,5 +118,7 @@ src/external.js    RDAP, Wayback, robots/sitemap/ads.txt/security.txt/llms.txt
 src/classify.js    category classifier and audience signals
 src/store.js       report cache and persistent site index (similar sites, leaderboard)
 public/            single-page frontend (no build step)
+public/lite.js     browser-only analysis used when no API server is reachable
+public/shared/     detection tables and traffic model shared by server and browser
 test/              node:test suites with a local fixture site
 ```

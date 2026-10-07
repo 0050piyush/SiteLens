@@ -1,0 +1,49 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optional: point the frontend at a hosted SiteLens API for full reports.
+      # Set it under Settings → Secrets and variables → Actions → Variables.
+      - name: Configure API endpoint
+        env:
+          API_URL: ${{ vars.SITELENS_API_URL }}
+        run: |
+          if [ -n "$API_URL" ]; then
+            if ! printf '%s' "$API_URL" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$'; then
+              echo "SITELENS_API_URL must be an https:// URL" >&2
+              exit 1
+            fi
+            printf "export const API_BASE = '%s';\n" "${API_URL%/}" > public/config.js
+            echo "Using API at ${API_URL%/}"
+          else
+            echo "No SITELENS_API_URL set: the site runs in browser-only (lite) mode."
+          fi
+          touch public/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4

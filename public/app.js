@@ -1,4 +1,6 @@
 import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './charts.js';
+import { API_BASE } from './config.js';
+import { analyzeLite } from './lite.js';
 
 const main = document.getElementById('main');
 
@@ -57,8 +59,35 @@ function cleanDomain(input) {
 
 // ---- API ---------------------------------------------------------------------
 
+const apiUrl = (path) => `${API_BASE}${path}`;
+
+// Full mode needs a SiteLens API server; without one (e.g. GitHub Pages) the
+// app falls back to browser-only checks.
+let backendPromise;
+function hasBackend() {
+  backendPromise ||= fetch(apiUrl('/api/v1/status'), { headers: { accept: 'application/json' } })
+    .then((r) => r.ok && /json/.test(r.headers.get('content-type') || ''))
+    .catch(() => false);
+  return backendPromise;
+}
+
+const liteRecent = () => store.get('sitelens-recent', []);
+function rememberLite(r) {
+  const list = liteRecent().filter((x) => x.domain !== r.domain);
+  list.unshift({ domain: r.domain, icon: r.site.icon, rank: r.rank?.rank ?? null, analyzedAt: r.meta.analyzedAt });
+  store.set('sitelens-recent', list.slice(0, 12));
+}
+
+function liteNotice() {
+  return h('div', { class: 'callout', style: { marginTop: '16px' } },
+    h('b', null, 'Lite mode. '),
+    'This copy runs entirely in your browser, so it shows DNS, hosting, email, rank, registration and archive data. ',
+    'Tech stack, SEO, performance and security-header audits need the SiteLens API server. ',
+    h('a', { href: 'https://github.com/0050piyush/SiteLens#run-it', target: '_blank', rel: 'noopener' }, 'How to run it →'));
+}
+
 async function api(path) {
-  const res = await fetch(path, { headers: { accept: 'application/json' } });
+  const res = await fetch(apiUrl(path), { headers: { accept: 'application/json' } });
   let body;
   try { body = await res.json(); } catch { body = { error: `HTTP ${res.status}` }; }
   // An unreachable site still yields a report (with reachable: false).
@@ -176,7 +205,7 @@ function homeView() {
           ['Clickstream traffic sources & demographics', false, true],
         ].map(([f, a, b]) => h('tr', null, h('td', null, f), cell(a), cell(b))))))));
 
-  api('/api/v1/recent?limit=12').then(({ sites }) => {
+  hasBackend().then((ok) => (ok ? api('/api/v1/recent?limit=12') : { sites: liteRecent() })).then(({ sites }) => {
     recentBox.replaceChildren(...(sites.length ? sites.map(siteTile) : [h('div', { class: 'muted small' }, 'Nothing analyzed yet. Be the first: search above.')]));
   }).catch(() => recentBox.replaceChildren(h('div', { class: 'muted small' }, 'Could not load recent sites.')));
   return view;
@@ -233,7 +262,9 @@ async function siteView(domain, fresh = false) {
   render(loading);
   let r;
   try {
-    r = await api(`/api/v1/analyze/${encodeURIComponent(domain)}${fresh ? '?fresh=1' : ''}`);
+    r = (await hasBackend())
+      ? await api(`/api/v1/analyze/${encodeURIComponent(domain)}${fresh ? '?fresh=1' : ''}`)
+      : await analyzeLite(domain);
   } catch (err) {
     loading.stop();
     return render(errorView(`Couldn't analyze ${domain}`, err.message, () => siteView(domain, true)));
@@ -242,6 +273,10 @@ async function siteView(domain, fresh = false) {
   if (currentRoute !== `site:${domain}`) return;
   if (!r.reachable) return render(errorView(`Couldn't reach ${r.host || domain}`, r.error || 'The site did not respond.', () => siteView(domain, true)));
   document.title = `${r.domain} · SiteLens`;
+  if (r.mode === 'lite') {
+    rememberLite(r);
+    return render(liteReportView(r));
+  }
   render(reportView(r));
 }
 
@@ -277,15 +312,15 @@ function reportView(r) {
           h('a', { class: 'btn sm', href: `#/compare/${r.domain}` }, 'Compare'),
           watchBtn,
           h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
-          h('a', { class: 'btn sm', href: `/api/v1/analyze/${r.domain}?format=csv` }, 'CSV'),
+          h('a', { class: 'btn sm', href: apiUrl(`/api/v1/analyze/${r.domain}?format=csv`) }, 'CSV'),
           h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'))),
       h('div', { class: 'muted small' }, `Analyzed ${ago(r.meta.analyzedAt)} in ${(r.meta.durationMs / 1000).toFixed(1)}s`)),
 
     prev && prev.at !== r.meta.analyzedAt ? changesCallout(prev, r) : null,
 
     h('div', { class: 'kpis' },
-      kpi('Global rank', rankStr(rk?.rank), rk?.change ? h('span', { class: rk.change > 0 ? 'delta-up' : 'delta-down' }, `${rk.change > 0 ? '▲' : '▼'} ${fmt(Math.abs(rk.change))} in 30 days`) : (rk?.rank ? 'Tranco list' : 'Not in top 1M')),
-      kpi('Monthly visits', t?.available ? `~${compact(t.monthlyVisits)}` : '< 10K', t?.available ? `${compact(t.low)} – ${compact(t.high)} est.` : 'estimate'),
+      rankKpi(r),
+      visitsKpi(r),
       kpi('Overall score', `${r.scores.overall}`, `Perf ${r.scores.performance} · SEO ${r.scores.seo} · Sec ${r.scores.security}`),
       kpi('Domain age', ageYears != null ? `${ageYears} yrs` : '—', rdap?.created ? `Registered ${date(rdap.created)}` : (wb?.firstSeen ? `Archived since ${wb.firstSeen.slice(0, 4)}` : 'unknown')),
       kpi('Technologies', String(r.tech.count), Object.keys(r.tech.byCategory).slice(0, 3).join(', ') || 'none detected'),
@@ -413,16 +448,13 @@ function auditCard(name, audit) {
     })));
 }
 
-function infraView(r) {
+const list = (arr, empty = '—') => (arr?.length ? arr.join(', ') : empty);
+
+function hostingCard(r) {
   const d = r.dns;
-  const tls = r.tls;
   const net = d?.network;
-  const m = r.performance.metrics || {};
-  const timing = [['DNS', m.dns], ['Connect', m.connect], ['TLS', m.tls], ['First byte', m.ttfb], ['Download', m.total]].filter(([, v]) => v != null);
-  const list = (arr, empty = '—') => (arr?.length ? arr.join(', ') : empty);
-  return h('div', { class: 'grid g2' },
-    h('div', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h3', null, 'Hosting & network')),
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h3', null, 'Hosting & network')),
       h('dl', { class: 'kv' },
         h('dt', null, 'Hosting'), h('dd', null, d?.providers?.hosting || '—'),
         h('dt', null, 'IP address'), h('dd', { class: 'mono' }, net?.ip || r.http?.ip || '—'),
@@ -432,8 +464,12 @@ function infraView(r) {
         h('dt', null, 'IPv6'), h('dd', null, d ? (d.ipv6 ? `Yes (${d.aaaa[0]})` : 'No') : '—'),
         h('dt', null, 'DNS provider'), h('dd', null, list(d?.providers?.dns, list(d?.ns))),
         h('dt', null, 'Nameservers'), h('dd', { class: 'mono' }, list(d?.ns)),
-        h('dt', null, 'www CNAME'), h('dd', { class: 'mono' }, d?.wwwCname || '—'))),
-    h('div', { class: 'card' },
+        h('dt', null, 'www CNAME'), h('dd', { class: 'mono' }, d?.wwwCname || '—')));
+}
+
+function saasCard(r) {
+  const d = r.dns;
+  return h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('div', null, h('h3', null, 'Email & SaaS footprint'), h('p', { class: 'muted small' }, 'From MX, SPF and TXT verification records.'))),
       h('dl', { class: 'kv' },
         h('dt', null, 'Email provider'), h('dd', null, list(d?.providers?.email, d?.mx?.length ? d.mx[0] : 'No MX records')),
@@ -442,7 +478,31 @@ function infraView(r) {
       h('h4', { class: 'small muted', style: { margin: '14px 0 8px' } }, 'TOOLS VERIFIED ON THIS DOMAIN'),
       d?.providers?.verifiedServices?.length
         ? h('div', { class: 'chips' }, d.providers.verifiedServices.map((s) => h('span', { class: 'chip' }, s)))
-        : h('div', { class: 'muted small' }, 'None found in TXT records.')),
+        : h('div', { class: 'muted small' }, 'None found in TXT records.'));
+}
+
+function rankKpi(r) {
+  const rk = r.rank;
+  const t = r.traffic;
+  if (!rk?.rank && t?.rankUnavailable) return kpi('Global rank', '—', 'ranking service unreachable');
+  return kpi('Global rank', rankStr(rk?.rank), rk?.change
+    ? h('span', { class: rk.change > 0 ? 'delta-up' : 'delta-down' }, `${rk.change > 0 ? '▲' : '▼'} ${fmt(Math.abs(rk.change))} in 30 days`)
+    : (rk?.rank ? 'Tranco list' : 'Not in top 1M'));
+}
+
+function visitsKpi(r) {
+  const t = r.traffic;
+  if (t?.available) return kpi('Monthly visits', `~${compact(t.monthlyVisits)}`, `${compact(t.low)} – ${compact(t.high)} est.`);
+  return kpi('Monthly visits', t?.rankUnavailable ? '—' : '< 10K', t?.rankUnavailable ? 'needs rank data' : 'estimate');
+}
+
+function infraView(r) {
+  const tls = r.tls;
+  const m = r.performance.metrics || {};
+  const timing = [['DNS', m.dns], ['Connect', m.connect], ['TLS', m.tls], ['First byte', m.ttfb], ['Download', m.total]].filter(([, v]) => v != null);
+  return h('div', { class: 'grid g2' },
+    hostingCard(r),
+    saasCard(r),
     h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('h3', null, 'TLS certificate')),
       tls && !tls.error ? h('dl', { class: 'kv' },
@@ -552,7 +612,7 @@ function similarView(r) {
 }
 
 function apiSnippet(domain) {
-  const base = location.origin;
+  const base = API_BASE || location.origin;
   return h('div', { class: 'card' },
     h('p', { style: { marginTop: 0 } }, 'Everything on this page is available as JSON. No key needed. ', h('a', { href: '#/api' }, 'API docs →')),
     h('pre', null, `curl ${base}/api/v1/analyze/${domain}\ncurl "${base}/api/v1/analyze/${domain}?fields=scores,traffic.monthlyVisits,tech.list"\ncurl ${base}/api/v1/rank/${domain}`));
@@ -564,6 +624,76 @@ function downloadJson(r) {
   a.href = URL.createObjectURL(blob);
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---- lite (browser-only) report ------------------------------------------------
+
+function liteReportView(r) {
+  const watchBtn = h('button', { class: 'btn sm', type: 'button' }, isWatched(r.domain) ? '★ Watching' : '☆ Watch');
+  watchBtn.addEventListener('click', () => { watchBtn.textContent = toggleWatch(r) ? '★ Watching' : '☆ Watch'; });
+  const d = r.dns;
+  const rdap = r.domainInfo?.rdap;
+  const wb = r.domainInfo?.wayback;
+  const ageYears = rdap?.ageYears ?? (wb?.firstSeen ? Math.round(((Date.now() - new Date(wb.firstSeen)) / 31557600000) * 10) / 10 : null);
+  const es = r.emailSecurity;
+  return h('div', null,
+    h('div', { class: 'report-head', id: 'overview' },
+      favicon(r.site?.icon, r.domain, 'lg'),
+      h('div', { class: 'info' },
+        h('h1', null, r.domain, h('span', { class: 'chip' }, 'Lite report')),
+        h('div', { class: 'report-actions', style: { marginTop: '10px' } },
+          ext(r.url, h('span', { class: 'btn sm' }, 'Visit site ↗')),
+          h('a', { class: 'btn sm', href: `#/compare/${r.domain}` }, 'Compare'),
+          watchBtn,
+          h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
+          h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'))),
+      h('div', { class: 'muted small' }, `Checked ${ago(r.meta.analyzedAt)} in ${(r.meta.durationMs / 1000).toFixed(1)}s`)),
+    liteNotice(),
+    h('div', { class: 'kpis' },
+      rankKpi(r),
+      visitsKpi(r),
+      kpi('Domain age', ageYears != null ? `${ageYears} yrs` : '—', rdap?.created ? `Registered ${date(rdap.created)}` : (wb?.firstSeen ? `Archived since ${wb.firstSeen.slice(0, 4)}` : 'unknown')),
+      kpi('Hosting', d?.providers?.hosting || '—', d?.network?.country ? `Server in ${d.network.country}` : 'from IP network'),
+      kpi('Email', d?.providers?.email?.[0] || (d?.mx?.length ? 'Custom' : 'None'), d?.providers?.emailSenders?.length ? `+ ${d.providers.emailSenders.length} sending service(s)` : 'MX records'),
+      kpi('Email security', es ? `${es.score}` : '—', es ? `Grade ${es.grade}` : 'DNS unavailable')),
+    h('section', { class: 'section', id: 'traffic' }, trafficCard(r)),
+    h('section', { class: 'section', id: 'infra' }, h('h2', null, 'Infrastructure'),
+      d ? h('div', { class: 'grid g2' }, hostingCard(r), saasCard(r)) : h('div', { class: 'callout err' }, 'DNS lookups failed. Try again in a moment.')),
+    es ? h('section', { class: 'section', id: 'audits' }, h('h2', null, 'Email & DNS security'),
+      h('div', { class: 'grid g2' }, auditCard('Email & DNS', es),
+        h('div', { class: 'card' },
+          h('div', { class: 'card-head' }, h('h3', null, 'Raw records')),
+          h('pre', null, [
+            `A      ${list(d.a)}`, `AAAA   ${list(d.aaaa)}`, `MX     ${list(d.mx)}`, `NS     ${list(d.ns)}`,
+            `SPF    ${d.spf || '—'}`, `DMARC  ${d.dmarc || '—'}`, ...d.txt.filter((t) => !/^v=spf1/i.test(t)).slice(0, 12).map((t) => `TXT    ${t}`),
+          ].join('\n'))))) : null,
+    h('section', { class: 'section', id: 'domain' }, h('h2', null, 'Domain & history'), domainView(r)));
+}
+
+async function liteCompare(domains) {
+  const reports = await Promise.all(domains.map((d) => analyzeLite(d).catch((err) => ({ domain: d, reachable: false, error: err.message }))));
+  return {
+    lite: true,
+    domains,
+    sites: reports.map((r) => (r.reachable ? {
+      domain: r.domain,
+      reachable: true,
+      icon: r.site.icon,
+      category: null,
+      rank: r.rank?.rank ?? null,
+      monthlyVisits: r.traffic?.monthlyVisits ?? null,
+      scores: null,
+      tech: null,
+      hosting: r.dns?.providers?.hosting || null,
+      providers: r.dns?.providers || null,
+      tls: null,
+      domainAge: r.domainInfo?.rdap?.ageYears ?? null,
+      firstSeen: r.domainInfo?.wayback?.firstSeen ?? null,
+      rankHistory: r.rank?.history || [],
+      emailSecurity: r.emailSecurity?.score ?? null,
+      saas: r.dns?.providers?.verifiedServices?.length ?? null,
+    } : { domain: r.domain, reachable: false, error: r.error })),
+  };
 }
 
 // ---- compare -------------------------------------------------------------------
@@ -594,7 +724,9 @@ async function compareView(list) {
   results.append(loading);
   let data;
   try {
-    data = await api(`/api/v1/compare?domains=${encodeURIComponent(domains.join(','))}`);
+    data = (await hasBackend())
+      ? await api(`/api/v1/compare?domains=${encodeURIComponent(domains.join(','))}`)
+      : await liteCompare(domains);
   } catch (err) {
     loading.stop();
     results.replaceChildren(h('div', { class: 'callout err section' }, err.message));
@@ -612,6 +744,7 @@ function compareResults(data) {
   const metric = (title, get, { fmt: f = fmt, higherBetter = true, max } = {}) => {
     const vals = ok.map((s) => ({ s, v: get(s) }));
     const nums = vals.filter((x) => x.v != null).map((x) => x.v);
+    if (!nums.length) return null;
     const best = nums.length > 1 && !nums.every((v) => v === nums[0]) ? (higherBetter ? Math.max(...nums) : Math.min(...nums)) : null;
     return h('div', { class: 'metric-group' },
       h('h4', null, title),
@@ -635,6 +768,8 @@ function compareResults(data) {
     ['Domain age', (s) => s.domainAge, (v) => `${Math.round(v * 10) / 10} yrs`, true],
     ['Sitemap URLs', (s) => s.sitemapUrls, fmt, null],
     ['Words on homepage', (s) => s.words, fmt, null],
+    ['Email & DNS security', (s) => s.emailSecurity, String, true],
+    ['SaaS tools verified', (s) => s.saas, String, null],
   ];
   const table = h('table', null,
     h('thead', null, h('tr', null, h('th', null, 'Metric'), ok.map((s) => h('th', { class: 'num' }, h('span', { class: 'nowrap' }, h('i', { style: { display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: color(s), marginRight: '6px' } }), s.domain))))),
@@ -642,16 +777,18 @@ function compareResults(data) {
       rows.map(([label, get, f, higher]) => {
         const vals = ok.map(get);
         const nums = vals.filter((v) => v != null);
+        if (!nums.length) return null;
         const allSame = nums.every((v) => v === nums[0]);
         const best = higher == null || nums.length < 2 || allSame ? null : higher ? Math.max(...nums) : Math.min(...nums);
         return h('tr', null, h('td', null, label), vals.map((v) => h('td', { class: `num ${v != null && v === best ? 'win' : ''}` }, v == null ? '—' : f(v))));
       }),
       [['Category', (s) => s.category || '—'], ['Hosting', (s) => s.hosting || s.providers?.hosting || '—'], ['Email', (s) => s.providers?.email?.join(', ') || '—'],
-        ['TLS', (s) => (s.tls ? `${s.tls.protocol}${s.tls.http2 ? ' · h2' : ''}` : '—')], ['First archived', (s) => s.firstSeen || '—']].map(([label, get]) =>
-        h('tr', null, h('td', null, label), ok.map((s) => h('td', { class: 'num small' }, get(s)))))));
+        ['TLS', (s) => (s.tls ? `${s.tls.protocol}${s.tls.http2 ? ' · h2' : ''}` : '—')], ['First archived', (s) => s.firstSeen || '—']]
+        .filter(([, get]) => ok.some((s) => get(s) !== '—'))
+        .map(([label, get]) => h('tr', null, h('td', null, label), ok.map((s) => h('td', { class: 'num small' }, get(s)))))));
 
   const allTech = new Map();
-  ok.forEach((s) => s.tech.forEach((t) => allTech.set(t, (allTech.get(t) || 0) + 1)));
+  ok.forEach((s) => (s.tech || []).forEach((t) => allTech.set(t, (allTech.get(t) || 0) + 1)));
   const shared = [...allTech].filter(([, n]) => n === ok.length).map(([t]) => t);
 
   return h('div', null,
@@ -665,11 +802,13 @@ function compareResults(data) {
         h('div', { class: 'card-head' }, h('h3', null, 'Head to head')),
         metric('Est. monthly visits', (s) => s.monthlyVisits, { fmt: compact }),
         metric('Overall score', (s) => s.scores?.overall, { max: 100, fmt: String }),
+        metric('Email & DNS security', (s) => s.emailSecurity, { max: 100, fmt: String }),
+        metric('Domain age', (s) => s.domainAge, { fmt: (v) => `${Math.round(v * 10) / 10} yrs` }),
         metric('Server response', (s) => s.performance?.ttfb, { fmt: (v) => `${v} ms`, higherBetter: false }))),
     h('div', { class: 'section card' },
-      h('div', { class: 'card-head' }, h('h3', null, 'All metrics'), h('a', { href: `/api/v1/compare?domains=${data.domains.join(',')}&format=csv`, class: 'btn sm' }, 'Download CSV')),
+      h('div', { class: 'card-head' }, h('h3', null, 'All metrics'), data.lite ? null : h('a', { href: apiUrl(`/api/v1/compare?domains=${data.domains.join(',')}&format=csv`), class: 'btn sm' }, 'Download CSV')),
       h('div', { class: 'table-wrap' }, table)),
-    h('div', { class: 'section card' },
+    data.lite ? liteNotice() : h('div', { class: 'section card' },
       h('div', { class: 'card-head' }, h('div', null, h('h3', null, 'Technology overlap'), h('p', { class: 'muted small' }, shared.length ? `Shared by all: ${shared.join(', ')}` : 'No technology shared by all sites.'))),
       h('div', { class: 'grid g2' }, ok.map((s) => h('div', null,
         h('h4', { class: 'small', style: { marginBottom: '8px' } }, s.domain),
@@ -688,6 +827,11 @@ async function topView(tab = 'global') {
       h('p', { class: 'muted', style: { margin: '6px 0 0' } }, tab === 'global' ? 'The most popular domains on the web, from the Tranco list.' : 'Every site analyzed on this server, ranked by score.')), tabs),
     body));
 
+  if (!(await hasBackend())) {
+    body.replaceChildren(h('div', { class: 'callout' }, 'Rankings come from the SiteLens API server, which this copy of the site does not have. ',
+      h('a', { href: 'https://github.com/0050piyush/SiteLens#run-it', target: '_blank', rel: 'noopener' }, 'How to run it →')));
+    return;
+  }
   if (tab === 'global') {
     try {
       const data = await api('/api/v1/top?limit=200');
@@ -739,7 +883,7 @@ async function topView(tab = 'global') {
 // ---- API docs ------------------------------------------------------------------
 
 async function apiView() {
-  const base = location.origin;
+  const base = API_BASE || location.origin;
   const statusBox = h('div', { class: 'muted small' }, 'Loading…');
   const endpoints = h('div', null);
   const select = h('select', { 'aria-label': 'Endpoint' });
@@ -757,7 +901,7 @@ async function apiView() {
     out.textContent = 'Loading…';
     const t0 = performance.now();
     try {
-      const res = await fetch(url);
+      const res = await fetch(apiUrl(url));
       const text = await res.text();
       let pretty = text;
       try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* not JSON */ }
@@ -775,7 +919,7 @@ async function apiView() {
   render(h('div', null,
     h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'SiteLens API'),
     h('p', { class: 'muted', style: { maxWidth: '720px' } }, 'A free JSON API for website intelligence. No sign-up and no key needed. Responses are cached for 6 hours, CORS is open, and the full OpenAPI 3.1 spec is at ',
-      h('a', { href: '/api/openapi.json' }, '/api/openapi.json'), '.'),
+      h('a', { href: apiUrl('/api/openapi.json') }, '/api/openapi.json'), '.'),
     h('div', { class: 'grid g-main section' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', null, 'Endpoints')), endpoints),
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', null, 'Limits & status')), statusBox)),
@@ -789,6 +933,12 @@ async function apiView() {
       codeCard('JavaScript', `const res = await fetch(\n  '${base}/api/v1/analyze/stripe.com'\n);\nconst report = await res.json();\nconsole.log(report.scores, report.traffic);`),
       codeCard('Python', `import requests\n\nr = requests.get(\n  "${base}/api/v1/compare",\n  params={"domains": "stripe.com,adyen.com"},\n)\nprint(r.json()["sites"])`))));
 
+  if (!(await hasBackend())) {
+    const msg = 'No API server is connected to this copy of SiteLens. Run the server (npm start) or set the SITELENS_API_URL repository variable, then redeploy.';
+    endpoints.replaceChildren(h('p', { class: 'muted small', style: { margin: 0 } }, msg));
+    statusBox.replaceChildren(h('dl', { class: 'kv' }, h('dt', null, 'Status'), h('dd', null, 'Lite mode (browser only)')));
+    return;
+  }
   try {
     const [spec, status] = await Promise.all([api('/api/openapi.json'), api('/api/v1/status')]);
     endpoints.replaceChildren(...Object.entries(spec.paths).map(([p, ops]) => {
