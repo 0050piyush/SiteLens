@@ -50,7 +50,7 @@ The repo includes a workflow (`.github/workflows/pages.yml`) that publishes the 
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
 3. Re-run the "Deploy to GitHub Pages" workflow, or push a commit.
 
-Pages can only host static files, so by default the site runs in **lite mode**, entirely in the visitor's browser. It shows rank, traffic estimate, DNS, hosting, email and SaaS footprint, email security, registration and archive history, and it supports comparisons. For full reports (tech stack, SEO, performance, security headers), run the server somewhere (Hostinger, Render, a VPS…) and set the repository variable **`SITELENS_API_URL`** (Settings → Secrets and variables → Actions → Variables), for example `https://api.example.com`. The next deploy points the Pages site at that API. On the server, also set `SITELENS_ALLOWED_ORIGINS=https://0050piyush.github.io` so the Pages site may call it without a key.
+Pages can only host static files, so by default the site runs in **lite mode**, entirely in the visitor's browser. It shows rank, traffic estimate, DNS, hosting, email and SaaS footprint, email security, registration and archive history, and it supports comparisons. For full reports (tech stack, SEO, performance, security headers), run the server somewhere (Hostinger, Render, a VPS…) and set the repository variable **`SITELENS_API_URL`** (Settings → Secrets and variables → Actions → Variables), for example `https://api.example.com`. The next deploy points the Pages site at that API. On the server, also set `SITELENS_ALLOWED_ORIGINS=https://0050piyush.github.io` so the Pages site may call it without a key. Set the repository variable **`SITELENS_CONTACT`** (an email or https URL) to turn on the pricing page's "Get Starter/Pro/Business" buttons.
 
 ### Hostinger (Business or Cloud plans)
 
@@ -70,7 +70,18 @@ All endpoints are `GET` and return JSON. The OpenAPI 3.1 spec is served at `/api
 The API is **not** open to the public. Requests are allowed when:
 
 - they come from **SiteLens's own website**: the same origin as the server, or an origin listed in `SITELENS_ALLOWED_ORIGINS` (such as your GitHub Pages site). Website visitors get `SITELENS_ANON_PER_HOUR` analyses per hour per IP; or
-- they send a valid **API key** in the `X-API-Key` header (or `?api_key=`). Each key gets `SITELENS_KEY_PER_HOUR` analyses per hour. Issue keys by adding them to `SITELENS_API_KEYS`, for example to paying customers.
+- they send a valid **API key** in the `X-API-Key` header (or `?api_key=`). Each key belongs to a plan, which sets its limits.
+
+### Plans
+
+| Plan | Price | Analyses / month | Burst / hour |
+| --- | --- | --- | --- |
+| Website | Free | No API access | 60 searches per visitor on the site |
+| Starter | $15/month | 1,000 | 200 |
+| Pro | $50/month | 10,000 | 1,000 |
+| Business | $199/month | 50,000 | 5,000 |
+
+Plans are defined in `public/shared/plans.js`, which both the server and the pricing page read. Issue a key by adding `key:plan` to `SITELENS_API_KEYS`, for example `SITELENS_API_KEYS=3f9a…:pro,8c21…:starter` (a key without a plan is Starter). A successful request uses one analysis per site (a comparison of 3 sites uses 3); failed requests are free. Usage is stored in `data/usage.json`, resets on the 1st of each month (UTC), and over-quota calls get `429`. Customers can check usage at `GET /api/v1/usage`. Payment is not automated yet: the pricing page's buttons email `SITELENS_CONTACT`, and you add the key.
 
 Everyone else gets `401 An API key is required`, and other websites' browsers get no CORS access. `/api/v1/status` and `/api/openapi.json` stay open for health checks and docs. Set `SITELENS_PUBLIC_API=1` if you ever want an open API.
 
@@ -86,7 +97,8 @@ The website check relies on browser headers (`Origin`, `Sec-Fetch-Site`, `Refere
 | `/api/v1/top?limit=100` | Tranco top sites |
 | `/api/v1/leaderboard?sort=score&category=…` | Sites analyzed on this server |
 | `/api/v1/recent` | Recently analyzed sites |
-| `/api/v1/status` | Health, cache and limits |
+| `/api/v1/usage` | Your key's plan, usage this month and remaining quota |
+| `/api/v1/status` | Health, cache, limits and plans |
 
 ```bash
 curl -H "X-API-Key: YOUR_KEY" http://localhost:8080/api/v1/analyze/stripe.com
@@ -100,12 +112,11 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | Listen address |
-| `SITELENS_API_KEYS` | none | Comma-separated API keys you issue. Required for any caller other than your own website |
+| `SITELENS_API_KEYS` | none | Comma-separated `key:plan` entries (plan: `starter`, `pro`, `business`). Required for any caller other than your own website |
 | `SITELENS_ALLOWED_ORIGINS` | none | Comma-separated origins of your own frontends allowed to call the API without a key, e.g. `https://0050piyush.github.io` |
 | `SITELENS_CONTACT` | none | Where people can get a key (email or URL); shown in 401 responses and on the API page |
 | `SITELENS_PUBLIC_API` | off | Set `1` to make the API open to everyone (anonymous limits apply) |
 | `SITELENS_ANON_PER_HOUR` | `60` | Analyses per hour per IP for website visitors |
-| `SITELENS_KEY_PER_HOUR` | `1000` | Analyses per hour per key |
 | `SITELENS_CACHE_HOURS` | `6` | Report cache lifetime |
 | `SITELENS_TRUST_PROXY` | off | Set `1` behind a reverse proxy to rate-limit by `X-Forwarded-For` |
 | `SITELENS_TRANCO_DOWNLOAD` | on | Set `0` to skip the background list download |

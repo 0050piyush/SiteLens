@@ -65,6 +65,7 @@ export function openapi(version) {
         },
       },
       '/api/v1/recent': { get: { summary: 'Recently analyzed sites', responses: { 200: { description: 'Recent' } } } },
+      '/api/v1/usage': { get: { summary: 'Your key\'s plan, usage this month and remaining quota', responses: { 200: { description: 'Usage' }, 401: err } } },
       '/api/v1/status': { get: { summary: 'Service health, cache and limits', responses: { 200: { description: 'Status' } } } },
     },
   };

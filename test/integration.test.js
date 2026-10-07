@@ -34,6 +34,9 @@ before(async () => {
   });
   sitePort = await listen(site);
 
+  // quota-key starts one analysis short of the Starter plan's monthly quota.
+  fs.writeFileSync(path.join(dataDir, 'usage.json'), JSON.stringify({ month: new Date().toISOString().slice(0, 7), counts: { 'quota-key': 999 } }));
+
   const probe = http.createServer();
   apiPort = await listen(probe);
   await new Promise((r) => probe.close(r));
@@ -41,7 +44,7 @@ before(async () => {
     cwd: new URL('..', import.meta.url).pathname,
     env: {
       ...process.env, PORT: String(apiPort), HOST: '127.0.0.1', SITELENS_ALLOW_PRIVATE: '1', SITELENS_OFFLINE: '1', SITELENS_DATA_DIR: dataDir,
-      SITELENS_ANON_PER_HOUR: '10', SITELENS_API_KEYS: `${KEY},other-key`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
+      SITELENS_ANON_PER_HOUR: '10', SITELENS_API_KEYS: `${KEY}:business,other-key,quota-key:starter`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -157,5 +160,35 @@ test('rate limits: website visitors per IP, key holders per key', async () => {
   assert.equal(last.headers.get('x-ratelimit-remaining'), '0');
   const keyed = await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': 'other-key' });
   assert.equal(keyed.status, 200);
-  assert.equal(keyed.headers.get('x-ratelimit-limit'), '1000');
+  assert.equal(keyed.headers.get('x-plan'), 'starter'); // keys without a plan default to Starter
+  assert.equal(keyed.headers.get('x-ratelimit-limit'), '200');
+  const biz = await get(`/api/v1/summary/localhost:${sitePort}`);
+  assert.equal(biz.headers.get('x-plan'), 'business');
+  assert.equal(biz.headers.get('x-ratelimit-limit'), '5000');
+  assert.equal(biz.headers.get('x-quota-limit'), '50000');
+});
+
+test('monthly plan quota is enforced and only successful calls count', async () => {
+  const q = { 'x-api-key': 'quota-key' };
+  // A failed request (unreachable domain) must not use quota.
+  const failed = await get('/api/v1/summary/does-not-exist.invalid', q);
+  assert.equal(failed.status, 404);
+  let usage = await get('/api/v1/usage', q);
+  assert.deepEqual([usage.body.plan, usage.body.used, usage.body.limit, usage.body.remaining], ['starter', 999, 1000, 1]);
+  const last = await get(`/api/v1/summary/localhost:${sitePort}`, q);
+  assert.equal(last.status, 200);
+  assert.equal(last.headers.get('x-quota-remaining'), '0');
+  await new Promise((r) => setTimeout(r, 50)); // usage is recorded when the response finishes
+  const over = await get(`/api/v1/summary/localhost:${sitePort}`, q);
+  assert.equal(over.status, 429);
+  assert.match(over.body.error, /Monthly quota reached for the Starter plan/);
+  usage = await get('/api/v1/usage', q);
+  assert.equal(usage.body.used, 1000);
+  // A comparison costs one unit per site.
+  const before = (await get('/api/v1/usage', { 'x-api-key': 'other-key' })).body.used;
+  await get(`/api/v1/compare?domains=localhost:${sitePort},localhost:${sitePort}`, { 'x-api-key': 'other-key' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await get('/api/v1/usage', { 'x-api-key': 'other-key' })).body.used, before + 2);
+  // Website visitors have no key, so no usage endpoint.
+  assert.equal((await get('/api/v1/usage', { 'sec-fetch-site': 'same-origin' })).status, 401);
 });

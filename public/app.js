@@ -1,5 +1,6 @@
 import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './charts.js';
-import { API_BASE } from './config.js';
+import { API_BASE, CONTACT } from './config.js';
+import { PLANS } from './shared/plans.js';
 import { analyzeLite } from './lite.js';
 
 const main = document.getElementById('main');
@@ -290,7 +291,7 @@ function homeView() {
         h('thead', null, h('tr', null, h('th', null, 'Feature'), h('th', null, 'SiteLens'), h('th', null, 'Typical paid tools'))),
         h('tbody', null, [
           ['Full report without an account', true, 'Limited preview'],
-          ['REST API for your own apps', 'API keys, self-hostable', 'Enterprise plans'],
+          ['REST API for your own apps', 'From $15/month', 'Sales-only, annual contracts'],
           ['Technology stack detection', true, 'Separate product / add-on'],
           ['Security, SEO and performance audits', true, false],
           ['SaaS tools & email providers (DNS)', true, false],
@@ -738,7 +739,7 @@ function similarView(r) {
 function apiSnippet(domain) {
   const base = API_BASE || location.origin;
   return h('div', { class: 'card' },
-    h('p', { style: { marginTop: 0 } }, 'Everything on this page is available as JSON to API customers with a key. ', h('a', { href: '#/api' }, 'API docs →')),
+    h('p', { style: { marginTop: 0 } }, 'Everything on this page is available as JSON to API customers, from $15/month. ', h('a', { href: '#/pricing' }, 'See pricing →'), ' · ', h('a', { href: '#/api' }, 'API docs')),
     h('pre', null, `curl -H "X-API-Key: YOUR_KEY" ${base}/api/v1/analyze/${domain}\ncurl -H "X-API-Key: YOUR_KEY" "${base}/api/v1/analyze/${domain}?fields=scores,traffic.monthlyVisits,tech.list"`));
 }
 
@@ -1061,7 +1062,7 @@ async function apiView() {
 
   render(h('div', null,
     h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'SiteLens API'),
-    h('p', { class: 'muted', style: { maxWidth: '720px' } }, 'A JSON API for website intelligence. Access requires an API key, sent in the X-API-Key header. The playground below runs through this website, so it works without one. Responses are cached for 6 hours, and the full OpenAPI 3.1 spec is at ',
+    h('p', { class: 'muted', style: { maxWidth: '720px' } }, 'A JSON API for website intelligence. Access requires an API key (plans from $15/month, see ', h('a', { href: '#/pricing' }, 'Pricing'), '), sent in the X-API-Key header. The playground below runs through this website, so it works without one. Responses are cached for 6 hours, and the full OpenAPI 3.1 spec is at ',
       h('a', { href: apiUrl('/api/openapi.json') }, '/api/openapi.json'), '.'),
     h('div', { class: 'grid g-main section' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', null, 'Endpoints')), endpoints),
@@ -1112,6 +1113,83 @@ function codeCard(title, code) {
   return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', null, title), btn), pre);
 }
 
+// ---- pricing -------------------------------------------------------------------
+
+function contactHref(contact, subject) {
+  if (!contact) return null;
+  if (/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(contact)) return `mailto:${contact}?subject=${encodeURIComponent(subject)}`;
+  return safeUrl(contact);
+}
+
+async function pricingView() {
+  const ctaBox = [];
+  const planCard = (p) => {
+    const cta = h('span', { class: 'btn plan-cta' + (p.featured ? ' primary' : '') }, `Get ${p.name}`);
+    ctaBox.push({ cta, plan: p });
+    return h('div', { class: `card plan${p.featured ? ' featured' : ''}` },
+      p.featured ? h('span', { class: 'chip accent plan-badge' }, 'Most popular') : null,
+      h('h3', null, p.name),
+      h('div', { class: 'price' }, h('b', null, `$${p.price}`), h('span', { class: 'muted' }, ' / month')),
+      h('p', { class: 'muted small plan-blurb' }, p.blurb),
+      h('ul', { class: 'plan-features' },
+        h('li', null, h('b', null, fmt(p.monthly)), ' API analyses / month'),
+        h('li', null, `Up to ${fmt(p.hourly)} per hour`),
+        h('li', null, 'Full reports: traffic, tech, SEO, performance, security'),
+        h('li', null, 'Compare, rank, tech and CSV endpoints'),
+        p.id === 'business' ? h('li', null, 'Priority email support') : null),
+      cta);
+  };
+  const view = h('div', null,
+    h('div', { class: 'pricing-head' },
+      h('h1', null, 'Simple, honest pricing'),
+      h('p', { class: 'muted' }, 'The SiteLens website is free. API access for your own apps starts at $15 a month, with no sales call and no annual contract.')),
+    h('div', { class: 'plans' },
+      h('div', { class: 'card plan' },
+        h('h3', null, 'Website'),
+        h('div', { class: 'price' }, h('b', null, 'Free')),
+        h('p', { class: 'muted small plan-blurb' }, 'Use SiteLens in your browser.'),
+        h('ul', { class: 'plan-features' },
+          h('li', null, 'Unlimited site reports on the website'),
+          h('li', null, 'Compare up to 5 sites'),
+          h('li', null, 'Watchlist, recent searches, saved results'),
+          h('li', { class: 'no' }, 'No API access')),
+        h('a', { class: 'btn plan-cta', href: '#/' }, 'Start analyzing')),
+      Object.values(PLANS).map(planCard)),
+    h('div', { class: 'section grid g2' },
+      h('div', { class: 'card' },
+        h('h3', null, 'How usage is counted'),
+        h('ul', { class: 'faq' },
+          h('li', null, 'Each successful request for a site counts as one analysis. A comparison counts one per site.'),
+          h('li', null, 'Failed requests (invalid or unreachable domains) are not counted.'),
+          h('li', null, 'Quotas reset on the 1st of each month (UTC). Check yours anytime at ', h('code', null, 'GET /api/v1/usage'), '.'),
+          h('li', null, 'Over the limit, the API returns HTTP 429 until the next month or an upgrade.'))),
+      h('div', { class: 'card' },
+        h('h3', null, 'Why it costs less'),
+        h('p', { class: 'muted small', style: { marginTop: '8px' } },
+          'Incumbent traffic-intelligence APIs are usually sold through sales teams and bundled into five-figure annual contracts. ',
+          'SiteLens is built on open data sources and live checks, so we can offer a self-serve API from $15 a month.'),
+        h('p', { class: 'muted small' },
+          'SiteLens does not have clickstream panel data, so it does not report traffic sources, referrals or demographics. Visit numbers are model estimates with ranges.'))));
+
+  render(view);
+  // Contact for key requests: build-time config first, then the API server's setting.
+  let contact = CONTACT;
+  if (!contact && (await hasBackend())) {
+    try { contact = (await api('/api/v1/status')).contact || ''; } catch { /* ignore */ }
+  }
+  for (const { cta, plan } of ctaBox) {
+    const href = contactHref(contact, `SiteLens ${plan.name} API plan`);
+    if (href) {
+      const a = h('a', { class: cta.className, href, target: href.startsWith('mailto:') ? null : '_blank', rel: 'noopener' }, `Get ${plan.name}`);
+      cta.replaceWith(a);
+    } else {
+      cta.classList.add('disabled');
+      cta.setAttribute('aria-disabled', 'true');
+      cta.textContent = 'Coming soon';
+    }
+  }
+}
+
 // ---- router ----------------------------------------------------------------------
 
 let currentRoute = '';
@@ -1134,6 +1212,7 @@ function route() {
     case 'compare': return compareView(decoded ? decoded.split(',') : []);
     case 'top': return topView(decoded || 'global');
     case 'api': return apiView();
+    case 'pricing': return pricingView();
     default: return render(homeView());
   }
 }

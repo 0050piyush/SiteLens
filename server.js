@@ -7,6 +7,8 @@ import { Cache, SiteIndex } from './src/store.js';
 import { normalizeDomain, registrableDomain, HttpError } from './src/util.js';
 import { getRank, trafficEstimate, loadLocalList, downloadList, localListStatus, topSites } from './src/rank.js';
 import { openapi } from './src/openapi.js';
+import { PLANS, DEFAULT_PLAN } from './public/shared/plans.js';
+import { UsageStore } from './src/usage.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -24,15 +26,25 @@ const stats = { analyses: 0, cacheHits: 0, requests: 0 };
 // per-visitor limits, and every other caller needs a key from SITELENS_API_KEYS.
 // SITELENS_PUBLIC_API=1 opens it to everyone (with the anonymous limits).
 const csv = (v) => (v || '').split(',').map((x) => x.trim()).filter(Boolean);
-const API_KEYS = new Set(csv(process.env.SITELENS_API_KEYS));
+// SITELENS_API_KEYS entries are "key" or "key:plan" (starter, pro, business).
+const API_KEYS = new Map(csv(process.env.SITELENS_API_KEYS).map((entry) => {
+  const i = entry.lastIndexOf(':');
+  const plan = i > 0 ? entry.slice(i + 1).toLowerCase() : '';
+  if (i > 0 && !PLANS[plan]) throw new Error(`Unknown plan "${plan}" in SITELENS_API_KEYS (use ${Object.keys(PLANS).join(', ')})`);
+  return i > 0 ? [entry.slice(0, i), plan] : [entry, DEFAULT_PLAN];
+}));
+const usage = new UsageStore();
 const PUBLIC_API = process.env.SITELENS_PUBLIC_API === '1';
 const ALLOWED_ORIGINS = new Set(csv(process.env.SITELENS_ALLOWED_ORIGINS).map((o) => o.replace(/\/+$/, '').toLowerCase()));
 const OPEN_ROUTES = new Set(['/api/v1/status', '/api/openapi.json']); // health checks and docs
 const CONTACT = process.env.SITELENS_CONTACT || null;
+// Hourly limits. Key holders also have a monthly quota from their plan.
 const LIMITS = {
   anon: { analyses: Number(process.env.SITELENS_ANON_PER_HOUR || 60), requests: 600 },
-  key: { analyses: Number(process.env.SITELENS_KEY_PER_HOUR || 1000), requests: 10000 },
 };
+const limitFor = (caller, kind) => (caller.tier === 'key'
+  ? (kind === 'analyses' ? PLANS[caller.plan].hourly : PLANS[caller.plan].hourly * 10)
+  : LIMITS.anon[kind]);
 const buckets = new Map();
 
 const originOf = (value) => {
@@ -46,7 +58,7 @@ const originOf = (value) => {
  */
 function callerOf(req) {
   const key = apiKeyOf(req);
-  if (key) return API_KEYS.has(key) ? { tier: 'key', key } : { tier: 'invalid' };
+  if (key) return API_KEYS.has(key) ? { tier: 'key', key, plan: API_KEYS.get(key) } : { tier: 'invalid' };
   const host = String(req.headers.host || '').toLowerCase();
   const isOwn = (origin) => !!origin && (ALLOWED_ORIGINS.has(origin) || new URL(origin).host === host);
   const origin = req.headers.origin ? originOf(req.headers.origin) : null;
@@ -65,7 +77,7 @@ function rateLimit(req, kind, caller) {
   if (!b || now > b.reset) b = { reset: now + 3600_000, analyses: 0, requests: 0 };
   b[kind]++;
   buckets.set(id, b);
-  const limit = LIMITS[tier][kind];
+  const limit = limitFor(caller, kind);
   return { ok: b[kind] <= limit, limit, remaining: Math.max(0, limit - b[kind]), reset: Math.ceil(b.reset / 1000), tier };
 }
 setInterval(() => { const now = Date.now(); for (const [k, b] of buckets) if (now > b.reset) buckets.delete(k); }, 600_000).unref();
@@ -234,6 +246,18 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     access: PUBLIC_API ? 'public' : 'API key required (X-API-Key header)',
     contact: CONTACT,
     limits: LIMITS,
+    plans: Object.values(PLANS).map(({ id, name, price, monthly, hourly }) => ({ id, name, price, monthly, hourly })),
+  });
+});
+
+route('GET', '/api/v1/usage', 'requests', async (req, res, _m, _q, caller) => {
+  if (caller.tier !== 'key') throw new HttpError(401, 'Send your API key in the X-API-Key header to see its usage.');
+  const plan = PLANS[caller.plan];
+  const used = usage.used(caller.key);
+  send(res, 200, {
+    plan: plan.id, planName: plan.name, pricePerMonth: plan.price,
+    month: usage.month(), used, limit: plan.monthly, remaining: Math.max(0, plan.monthly - used),
+    resetsAt: usage.resetsAt(), hourlyLimit: plan.hourly,
   });
 });
 
@@ -269,7 +293,7 @@ const server = http.createServer(async (req, res) => {
     if (PUBLIC_API) res.setHeader('access-control-allow-origin', '*');
     else if (reqOrigin && ALLOWED_ORIGINS.has(reqOrigin)) res.setHeader('access-control-allow-origin', req.headers.origin);
     res.setHeader('access-control-allow-headers', 'x-api-key, content-type');
-    res.setHeader('access-control-expose-headers', 'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, x-cache');
+    res.setHeader('access-control-expose-headers', 'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, x-cache, x-plan, x-quota-limit, x-quota-remaining');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const r = routes.find((rt) => rt.method === req.method && rt.re.test(pathname));
     if (!r) return send(res, 404, { error: `No route for ${req.method} ${pathname}`, docs: '/api/openapi.json' });
@@ -287,9 +311,26 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('x-ratelimit-remaining', rl.remaining);
     res.setHeader('x-ratelimit-reset', rl.reset);
     if (!rl.ok) return send(res, 429, { error: `Rate limit exceeded (${rl.limit} ${r.kind}/hour)`, reset: rl.reset });
+    // Monthly plan quota: one unit per analyzed site (a comparison counts each site).
+    if (caller.tier === 'key' && r.kind === 'analyses') {
+      const cost = pathname === '/api/v1/compare'
+        ? Math.min(5, Math.max(1, (url.searchParams.get('domains') || '').split(',').filter((d) => d.trim()).length))
+        : 1;
+      const plan = PLANS[caller.plan];
+      const used = usage.used(caller.key);
+      res.setHeader('x-plan', plan.id);
+      res.setHeader('x-quota-limit', plan.monthly);
+      if (used + cost > plan.monthly) {
+        res.setHeader('x-quota-remaining', Math.max(0, plan.monthly - used));
+        return send(res, 429, { error: `Monthly quota reached for the ${plan.name} plan (${plan.monthly} analyses). Upgrade or wait until ${usage.resetsAt()}.`, plan: plan.id, resetsAt: usage.resetsAt() });
+      }
+      res.setHeader('x-quota-remaining', plan.monthly - used - cost);
+      // Only successful responses use up quota.
+      res.once('finish', () => { if (res.statusCode < 400) usage.add(caller.key, cost); });
+    }
     try {
       const params = pathname.match(r.re).slice(1).map(decodeURIComponent);
-      await r.handler(req, res, params, url.searchParams);
+      await r.handler(req, res, params, url.searchParams, caller);
     } catch (err) {
       const status = err.status || (err instanceof URIError ? 400 : 500);
       if (status >= 500) console.error(err);
@@ -314,5 +355,5 @@ server.listen(PORT, HOST, () => {
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => { index.flush(); process.exit(0); });
+  process.on(sig, () => { index.flush(); usage.flush(); process.exit(0); });
 }

@@ -23,22 +23,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: point the frontend at a hosted SiteLens API for full reports.
-      # Set it under Settings → Secrets and variables → Actions → Variables.
-      - name: Configure API endpoint
+      # Optional repository variables (Settings → Secrets and variables → Actions → Variables):
+      #   SITELENS_API_URL  – a hosted SiteLens API, for full reports
+      #   SITELENS_CONTACT  – email or https URL where people request API keys
+      - name: Configure API endpoint and contact
         env:
           API_URL: ${{ vars.SITELENS_API_URL }}
+          CONTACT: ${{ vars.SITELENS_CONTACT }}
         run: |
-          if [ -n "$API_URL" ]; then
-            if ! printf '%s' "$API_URL" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$'; then
-              echo "SITELENS_API_URL must be an https:// URL" >&2
-              exit 1
-            fi
-            printf "export const API_BASE = '%s';\n" "${API_URL%/}" > public/config.js
-            echo "Using API at ${API_URL%/}"
-          else
-            echo "No SITELENS_API_URL set: the site runs in browser-only (lite) mode."
+          if [ -n "$API_URL" ] && ! printf '%s' "$API_URL" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$'; then
+            echo "SITELENS_API_URL must be an https:// URL" >&2
+            exit 1
           fi
+          if [ -n "$CONTACT" ] && ! printf '%s' "$CONTACT" | grep -Eq '^([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|https://[A-Za-z0-9./?=&_%#:-]+)$'; then
+            echo "SITELENS_CONTACT must be an email address or an https:// URL" >&2
+            exit 1
+          fi
+          printf "export const API_BASE = '%s';\nexport const CONTACT = '%s';\n" "${API_URL%/}" "$CONTACT" > public/config.js
+          echo "API: ${API_URL:-none (lite mode)} · contact: ${CONTACT:-none}"
           touch public/.nojekyll
 
       # Give every deploy fresh asset URLs so browsers (phone Safari in
