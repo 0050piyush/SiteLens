@@ -19,19 +19,47 @@ const inflight = new Map();
 const startedAt = Date.now();
 const stats = { analyses: 0, cacheHits: 0, requests: 0 };
 
-// API keys are optional: without SITELENS_API_KEYS the API is open with the
-// anonymous rate limit. With keys configured, keyed callers get a higher limit.
-const API_KEYS = new Set((process.env.SITELENS_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean));
+// Access policy. The API is private by default: SiteLens's own web pages may
+// call it (same origin, or an origin listed in SITELENS_ALLOWED_ORIGINS) with
+// per-visitor limits, and every other caller needs a key from SITELENS_API_KEYS.
+// SITELENS_PUBLIC_API=1 opens it to everyone (with the anonymous limits).
+const csv = (v) => (v || '').split(',').map((x) => x.trim()).filter(Boolean);
+const API_KEYS = new Set(csv(process.env.SITELENS_API_KEYS));
+const PUBLIC_API = process.env.SITELENS_PUBLIC_API === '1';
+const ALLOWED_ORIGINS = new Set(csv(process.env.SITELENS_ALLOWED_ORIGINS).map((o) => o.replace(/\/+$/, '').toLowerCase()));
+const OPEN_ROUTES = new Set(['/api/v1/status', '/api/openapi.json']); // health checks and docs
+const CONTACT = process.env.SITELENS_CONTACT || null;
 const LIMITS = {
   anon: { analyses: Number(process.env.SITELENS_ANON_PER_HOUR || 60), requests: 600 },
   key: { analyses: Number(process.env.SITELENS_KEY_PER_HOUR || 1000), requests: 10000 },
 };
 const buckets = new Map();
 
-function rateLimit(req, kind) {
+const originOf = (value) => {
+  try { return new URL(value).origin.toLowerCase(); } catch { return null; }
+};
+
+/**
+ * Who is calling: a key holder, SiteLens's own website, or an outsider.
+ * Browser headers can be forged by scripts, so the per-IP limits on the
+ * "site" tier remain the backstop; keys are what unlock real volume.
+ */
+function callerOf(req) {
   const key = apiKeyOf(req);
-  const tier = key && API_KEYS.has(key) ? 'key' : 'anon';
-  const id = tier === 'key' ? `k:${key}` : `ip:${clientIp(req)}`;
+  if (key) return API_KEYS.has(key) ? { tier: 'key', key } : { tier: 'invalid' };
+  const host = String(req.headers.host || '').toLowerCase();
+  const isOwn = (origin) => !!origin && (ALLOWED_ORIGINS.has(origin) || new URL(origin).host === host);
+  const origin = req.headers.origin ? originOf(req.headers.origin) : null;
+  if (origin) return isOwn(origin) ? { tier: 'site', origin } : { tier: PUBLIC_API ? 'anon' : 'none' };
+  if (req.headers['sec-fetch-site'] === 'same-origin') return { tier: 'site' };
+  const referer = req.headers.referer ? originOf(req.headers.referer) : null;
+  if (referer && isOwn(referer)) return { tier: 'site', origin: referer };
+  return { tier: PUBLIC_API ? 'anon' : 'none' };
+}
+
+function rateLimit(req, kind, caller) {
+  const tier = caller.tier === 'key' ? 'key' : 'anon';
+  const id = tier === 'key' ? `k:${caller.key}` : `ip:${clientIp(req)}`;
   const now = Date.now();
   let b = buckets.get(id);
   if (!b || now > b.reset) b = { reset: now + 3600_000, analyses: 0, requests: 0 };
@@ -203,7 +231,8 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     cachedReports: cache.size,
     trancoList: localListStatus(),
     ...stats,
-    auth: API_KEYS.size ? 'optional API keys (X-API-Key) raise limits' : 'open',
+    access: PUBLIC_API ? 'public' : 'API key required (X-API-Key header)',
+    contact: CONTACT,
     limits: LIMITS,
   });
 });
@@ -233,19 +262,31 @@ const server = http.createServer(async (req, res) => {
   const { pathname } = url;
 
   if (pathname.startsWith('/api/')) {
-    res.setHeader('access-control-allow-origin', '*');
+    // Browsers on other websites only get CORS access when the API is public
+    // or their origin is one of ours.
+    const reqOrigin = req.headers.origin ? originOf(req.headers.origin) : null;
+    res.setHeader('vary', 'Origin');
+    if (PUBLIC_API) res.setHeader('access-control-allow-origin', '*');
+    else if (reqOrigin && ALLOWED_ORIGINS.has(reqOrigin)) res.setHeader('access-control-allow-origin', req.headers.origin);
     res.setHeader('access-control-allow-headers', 'x-api-key, content-type');
     res.setHeader('access-control-expose-headers', 'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, x-cache');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const r = routes.find((rt) => rt.method === req.method && rt.re.test(pathname));
     if (!r) return send(res, 404, { error: `No route for ${req.method} ${pathname}`, docs: '/api/openapi.json' });
-    const apiKey = apiKeyOf(req);
-    if (apiKey && API_KEYS.size && !API_KEYS.has(apiKey)) return send(res, 401, { error: 'Invalid API key' });
-    const rl = rateLimit(req, r.kind);
+    const caller = OPEN_ROUTES.has(pathname) ? { tier: 'anon' } : callerOf(req);
+    if (caller.tier === 'invalid') return send(res, 401, { error: 'Invalid API key' });
+    if (caller.tier === 'none') {
+      return send(res, 401, {
+        error: 'An API key is required. Send it in the X-API-Key header.',
+        ...(CONTACT ? { contact: CONTACT } : {}),
+        docs: '/api/openapi.json',
+      }, { 'www-authenticate': 'ApiKey header="X-API-Key"' });
+    }
+    const rl = rateLimit(req, r.kind, caller);
     res.setHeader('x-ratelimit-limit', rl.limit);
     res.setHeader('x-ratelimit-remaining', rl.remaining);
     res.setHeader('x-ratelimit-reset', rl.reset);
-    if (!rl.ok) return send(res, 429, { error: `Rate limit exceeded (${rl.limit} ${r.kind}/hour for ${rl.tier} callers)`, reset: rl.reset });
+    if (!rl.ok) return send(res, 429, { error: `Rate limit exceeded (${rl.limit} ${r.kind}/hour)`, reset: rl.reset });
     try {
       const params = pathname.match(r.re).slice(1).map(decodeURIComponent);
       await r.handler(req, res, params, url.searchParams);

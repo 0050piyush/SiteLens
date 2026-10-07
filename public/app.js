@@ -266,7 +266,6 @@ function homeView() {
     recentBox);
   const watch = watchlist();
   const lead = h('p', { class: 'lead' }, 'Traffic estimates, global rank, tech stack, SEO, performance and security for any domain. Free, no sign-up.');
-  hasBackend().then((ok) => { if (ok) lead.textContent = lead.textContent.replace(/\.$/, ', with an open API.'); });
   const view = h('div', null,
     h('section', { class: 'hero' },
       h('h1', null, 'See inside ', h('span', { class: 'hl' }, 'any website'), '.'),
@@ -291,7 +290,7 @@ function homeView() {
         h('thead', null, h('tr', null, h('th', null, 'Feature'), h('th', null, 'SiteLens'), h('th', null, 'Typical paid tools'))),
         h('tbody', null, [
           ['Full report without an account', true, 'Limited preview'],
-          ['REST API', 'Free, open, self-hostable', 'Enterprise plans'],
+          ['REST API for your own apps', 'API keys, self-hostable', 'Enterprise plans'],
           ['Technology stack detection', true, 'Separate product / add-on'],
           ['Security, SEO and performance audits', true, false],
           ['SaaS tools & email providers (DNS)', true, false],
@@ -739,8 +738,8 @@ function similarView(r) {
 function apiSnippet(domain) {
   const base = API_BASE || location.origin;
   return h('div', { class: 'card' },
-    h('p', { style: { marginTop: 0 } }, 'Everything on this page is available as JSON. No key needed. ', h('a', { href: '#/api' }, 'API docs →')),
-    h('pre', null, `curl ${base}/api/v1/analyze/${domain}\ncurl "${base}/api/v1/analyze/${domain}?fields=scores,traffic.monthlyVisits,tech.list"\ncurl ${base}/api/v1/rank/${domain}`));
+    h('p', { style: { marginTop: 0 } }, 'Everything on this page is available as JSON to API customers with a key. ', h('a', { href: '#/api' }, 'API docs →')),
+    h('pre', null, `curl -H "X-API-Key: YOUR_KEY" ${base}/api/v1/analyze/${domain}\ncurl -H "X-API-Key: YOUR_KEY" "${base}/api/v1/analyze/${domain}?fields=scores,traffic.monthlyVisits,tech.list"`));
 }
 
 function downloadJson(r) {
@@ -1062,7 +1061,7 @@ async function apiView() {
 
   render(h('div', null,
     h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'SiteLens API'),
-    h('p', { class: 'muted', style: { maxWidth: '720px' } }, 'A free JSON API for website intelligence. No sign-up and no key needed. Responses are cached for 6 hours, CORS is open, and the full OpenAPI 3.1 spec is at ',
+    h('p', { class: 'muted', style: { maxWidth: '720px' } }, 'A JSON API for website intelligence. Access requires an API key, sent in the X-API-Key header. The playground below runs through this website, so it works without one. Responses are cached for 6 hours, and the full OpenAPI 3.1 spec is at ',
       h('a', { href: apiUrl('/api/openapi.json') }, '/api/openapi.json'), '.'),
     h('div', { class: 'grid g-main section' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', null, 'Endpoints')), endpoints),
@@ -1073,9 +1072,9 @@ async function apiView() {
         h('div', { class: 'row' }, select, input, h('button', { class: 'btn primary', type: 'submit', style: { height: '40px' } }, 'Send')),
         meta, out)),
     h('div', { class: 'section grid g3' },
-      codeCard('cURL', `curl ${base}/api/v1/analyze/stripe.com \\\n  -H "X-API-Key: optional"`),
-      codeCard('JavaScript', `const res = await fetch(\n  '${base}/api/v1/analyze/stripe.com'\n);\nconst report = await res.json();\nconsole.log(report.scores, report.traffic);`),
-      codeCard('Python', `import requests\n\nr = requests.get(\n  "${base}/api/v1/compare",\n  params={"domains": "stripe.com,adyen.com"},\n)\nprint(r.json()["sites"])`))));
+      codeCard('cURL', `curl ${base}/api/v1/analyze/stripe.com \\\n  -H "X-API-Key: YOUR_KEY"`),
+      codeCard('JavaScript', `const res = await fetch(\n  '${base}/api/v1/analyze/stripe.com',\n  { headers: { 'X-API-Key': process.env.SITELENS_KEY } }\n);\nconst report = await res.json();\nconsole.log(report.scores, report.traffic);`),
+      codeCard('Python', `import requests\n\nr = requests.get(\n  "${base}/api/v1/compare",\n  params={"domains": "stripe.com,adyen.com"},\n  headers={"X-API-Key": "YOUR_KEY"},\n)\nprint(r.json()["sites"])`))));
 
   if (!(await hasBackend())) {
     const msg = 'No API server is connected to this copy of SiteLens. Run the server (npm start) or set the SITELENS_API_URL repository variable, then redeploy.';
@@ -1092,8 +1091,9 @@ async function apiView() {
     statusBox.replaceChildren(h('dl', { class: 'kv' },
       h('dt', null, 'Status'), h('dd', null, h('span', { class: 'yes' }, '● '), status.status),
       h('dt', null, 'Version'), h('dd', null, status.version),
-      h('dt', null, 'Anonymous'), h('dd', null, `${status.limits.anon.analyses} analyses / hour`),
+      h('dt', null, 'Access'), h('dd', null, status.access),
       h('dt', null, 'With API key'), h('dd', null, `${status.limits.key.analyses} analyses / hour`),
+      status.contact ? [h('dt', null, 'Get a key'), h('dd', null, status.contact)] : null,
       h('dt', null, 'Indexed sites'), h('dd', null, fmt(status.indexedSites)),
       h('dt', null, 'Analyses run'), h('dd', null, fmt(status.analyses)),
       h('dt', null, 'Top-1M list'), h('dd', null, status.trancoList.loaded ? `${fmt(status.trancoList.domains)} domains` : 'Not loaded (API mode)')));

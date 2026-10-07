@@ -14,6 +14,7 @@ let server;
 let sitePort;
 let apiPort;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sitelens-test-'));
+const KEY = 'test-key-123';
 
 function listen(srv) {
   return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
@@ -38,7 +39,10 @@ before(async () => {
   await new Promise((r) => probe.close(r));
   server = spawn(process.execPath, ['server.js'], {
     cwd: new URL('..', import.meta.url).pathname,
-    env: { ...process.env, PORT: String(apiPort), HOST: '127.0.0.1', SITELENS_ALLOW_PRIVATE: '1', SITELENS_OFFLINE: '1', SITELENS_DATA_DIR: dataDir, SITELENS_ANON_PER_HOUR: '10' },
+    env: {
+      ...process.env, PORT: String(apiPort), HOST: '127.0.0.1', SITELENS_ALLOW_PRIVATE: '1', SITELENS_OFFLINE: '1', SITELENS_DATA_DIR: dataDir,
+      SITELENS_ANON_PER_HOUR: '10', SITELENS_API_KEYS: `${KEY},other-key`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
+    },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   await new Promise((resolve, reject) => {
@@ -53,8 +57,9 @@ after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
-const get = async (p) => {
-  const res = await fetch(`http://127.0.0.1:${apiPort}${p}`);
+// API calls carry a key unless a test overrides the headers.
+const get = async (p, headers = { 'x-api-key': KEY }) => {
+  const res = await fetch(`http://127.0.0.1:${apiPort}${p}`, { headers });
   const text = await res.text();
   let body;
   try { body = JSON.parse(text); } catch { body = text; }
@@ -119,9 +124,38 @@ test('static files, SPA fallback and traversal protection', async () => {
   }
 });
 
-test('rate limit applies per hour for analyses', async () => {
+test('API requires a key except for the site itself', async () => {
+  const target = `/api/v1/summary/localhost:${sitePort}`;
+  const anon = await get(target, {});
+  assert.equal(anon.status, 401);
+  assert.match(anon.body.error, /API key is required/);
+  assert.equal((await get(target, { 'x-api-key': 'wrong' })).status, 401);
+  assert.equal((await get(`${target}?api_key=${KEY}`, {})).status, 200);
+  // Another website's browser: refused, and no CORS grant.
+  const foreign = await get(target, { origin: 'https://evil.example' });
+  assert.equal(foreign.status, 401);
+  assert.equal(foreign.headers.get('access-control-allow-origin'), null);
+  // Health check and docs stay open.
+  assert.equal((await get('/api/v1/status', {})).status, 200);
+  assert.equal((await get('/api/openapi.json', {})).status, 200);
+});
+
+test('own website may call the API without a key', async () => {
+  const target = `/api/v1/summary/localhost:${sitePort}`;
+  const pages = await get(target, { origin: 'https://sitelens.example.github.io' });
+  assert.equal(pages.status, 200);
+  assert.equal(pages.headers.get('access-control-allow-origin'), 'https://sitelens.example.github.io');
+  assert.equal((await get(target, { 'sec-fetch-site': 'same-origin' })).status, 200);
+  assert.equal((await get(target, { referer: `http://127.0.0.1:${apiPort}/#/site/x` })).status, 200);
+  assert.equal((await get(target, { origin: `http://127.0.0.1:${apiPort}` })).status, 200);
+});
+
+test('rate limits: website visitors per IP, key holders per key', async () => {
   let last;
-  for (let i = 0; i < 11; i++) last = await get(`/api/v1/summary/localhost:${sitePort}`);
+  for (let i = 0; i < 11; i++) last = await get(`/api/v1/summary/localhost:${sitePort}`, { 'sec-fetch-site': 'same-origin' });
   assert.equal(last.status, 429);
   assert.equal(last.headers.get('x-ratelimit-remaining'), '0');
+  const keyed = await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': 'other-key' });
+  assert.equal(keyed.status, 200);
+  assert.equal(keyed.headers.get('x-ratelimit-limit'), '1000');
 });

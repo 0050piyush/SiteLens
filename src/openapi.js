@@ -7,18 +7,18 @@ export function openapi(version) {
     info: {
       title: 'SiteLens API',
       version,
-      description: 'Free, open website intelligence: popularity rank and traffic estimates, technology stack, SEO, performance, security, DNS/hosting, registration and archive history for any domain.',
+      description: 'Website intelligence: popularity rank and traffic estimates, technology stack, SEO, performance, security, DNS/hosting, registration and archive history for any domain. Requires an API key in the X-API-Key header.',
       license: { name: 'MIT' },
     },
     servers: [{ url: '/' }],
     components: {
-      securitySchemes: { ApiKey: { type: 'apiKey', in: 'header', name: 'X-API-Key', description: 'Optional. Raises the hourly limit when the server is configured with keys.' } },
+      securitySchemes: { ApiKey: { type: 'apiKey', in: 'header', name: 'X-API-Key', description: 'Required for all data endpoints.' } },
       schemas: {
         Error: { type: 'object', properties: { error: { type: 'string' } } },
         Scores: { type: 'object', properties: { overall: { type: 'integer' }, performance: { type: 'integer' }, seo: { type: 'integer' }, security: { type: 'integer' } } },
       },
     },
-    security: [{}, { ApiKey: [] }],
+    security: [{ ApiKey: [] }],
     paths: {
       '/api/v1/analyze/{domain}': {
         get: {

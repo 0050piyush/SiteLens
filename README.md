@@ -16,7 +16,7 @@ SiteLens is a self-hostable alternative to traffic-intelligence tools such as Si
 
 Your **last 5 searches** appear as one-click chips and as suggestions in the search and compare boxes, with a Clear button. Reports you've already run are **saved in your browser for 24 hours** (up to 15), so revisiting a site or adding it to a comparison is instant. Re-run forces a fresh check.
 
-There's also a **watchlist** that tells you what changed since your last visit, **rankings** (Tranco top sites plus a leaderboard of every site analyzed on your server), **similar sites** (matched by category, topics, tech stack and outbound links), and a **free REST API** with an in-browser playground.
+There's also a **watchlist** that tells you what changed since your last visit, **rankings** (Tranco top sites plus a leaderboard of every site analyzed on your server), **similar sites** (matched by category, topics, tech stack and outbound links), and a **REST API** (key-protected) with an in-browser playground.
 
 ### Honest about its limits
 
@@ -50,20 +50,31 @@ The repo includes a workflow (`.github/workflows/pages.yml`) that publishes the 
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
 3. Re-run the "Deploy to GitHub Pages" workflow, or push a commit.
 
-Pages can only host static files, so by default the site runs in **lite mode**, entirely in the visitor's browser. It shows rank, traffic estimate, DNS, hosting, email and SaaS footprint, email security, registration and archive history, and it supports comparisons. For full reports (tech stack, SEO, performance, security headers), run the server somewhere (Hostinger, Render, a VPS…) and set the repository variable **`SITELENS_API_URL`** (Settings → Secrets and variables → Actions → Variables), for example `https://api.example.com`. The next deploy points the Pages site at that API.
+Pages can only host static files, so by default the site runs in **lite mode**, entirely in the visitor's browser. It shows rank, traffic estimate, DNS, hosting, email and SaaS footprint, email security, registration and archive history, and it supports comparisons. For full reports (tech stack, SEO, performance, security headers), run the server somewhere (Hostinger, Render, a VPS…) and set the repository variable **`SITELENS_API_URL`** (Settings → Secrets and variables → Actions → Variables), for example `https://api.example.com`. The next deploy points the Pages site at that API. On the server, also set `SITELENS_ALLOWED_ORIGINS=https://0050piyush.github.io` so the Pages site may call it without a key.
 
 ### Hostinger (Business or Cloud plans)
 
 1. hPanel → **Websites → Add Website → Node.js Apps → Import Git Repository**, then pick this repo.
 2. Node version **22.x**, no build command, start command `npm start` (entry file `server.js`).
-3. Environment variables: `NODE_ENV=production`, `SITELENS_TRUST_PROXY=1`, `SITELENS_TRANCO_LIMIT=100000`.
+3. Environment variables: `NODE_ENV=production`, `SITELENS_TRUST_PROXY=1`, `SITELENS_TRANCO_LIMIT=100000`, plus `SITELENS_API_KEYS` (keys you hand out) and `SITELENS_ALLOWED_ORIGINS=https://0050piyush.github.io` if the GitHub Pages site should use this server.
 4. Deploy, then attach your domain or a subdomain. The app listens on the `PORT` Hostinger provides.
 
 The server needs outbound HTTPS and DNS. It connects directly and does not use an `HTTPS_PROXY`.
 
 ## API
 
-All endpoints are `GET` and return JSON with open CORS. The OpenAPI 3.1 spec is served at `/api/openapi.json`.
+All endpoints are `GET` and return JSON. The OpenAPI 3.1 spec is served at `/api/openapi.json`.
+
+### Access: private by default
+
+The API is **not** open to the public. Requests are allowed when:
+
+- they come from **SiteLens's own website**: the same origin as the server, or an origin listed in `SITELENS_ALLOWED_ORIGINS` (such as your GitHub Pages site). Website visitors get `SITELENS_ANON_PER_HOUR` analyses per hour per IP; or
+- they send a valid **API key** in the `X-API-Key` header (or `?api_key=`). Each key gets `SITELENS_KEY_PER_HOUR` analyses per hour. Issue keys by adding them to `SITELENS_API_KEYS`, for example to paying customers.
+
+Everyone else gets `401 An API key is required`, and other websites' browsers get no CORS access. `/api/v1/status` and `/api/openapi.json` stay open for health checks and docs. Set `SITELENS_PUBLIC_API=1` if you ever want an open API.
+
+The website check relies on browser headers (`Origin`, `Sec-Fetch-Site`, `Referer`). A determined script can fake these, so per-IP limits still cap that traffic; real volume always needs a key.
 
 | Endpoint | Description |
 | --- | --- |
@@ -78,8 +89,8 @@ All endpoints are `GET` and return JSON with open CORS. The OpenAPI 3.1 spec is 
 | `/api/v1/status` | Health, cache and limits |
 
 ```bash
-curl http://localhost:8080/api/v1/analyze/stripe.com
-curl "http://localhost:8080/api/v1/compare?domains=github.com,gitlab.com&format=csv"
+curl -H "X-API-Key: YOUR_KEY" http://localhost:8080/api/v1/analyze/stripe.com
+curl -H "X-API-Key: YOUR_KEY" "http://localhost:8080/api/v1/compare?domains=github.com,gitlab.com&format=csv"
 ```
 
 Reports are cached for 6 hours, and concurrent requests for the same domain share one analysis.
@@ -89,8 +100,11 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | Listen address |
-| `SITELENS_API_KEYS` | none | Comma-separated keys. Callers sending `X-API-Key` get the higher limit |
-| `SITELENS_ANON_PER_HOUR` | `60` | Analyses per hour per IP without a key |
+| `SITELENS_API_KEYS` | none | Comma-separated API keys you issue. Required for any caller other than your own website |
+| `SITELENS_ALLOWED_ORIGINS` | none | Comma-separated origins of your own frontends allowed to call the API without a key, e.g. `https://0050piyush.github.io` |
+| `SITELENS_CONTACT` | none | Where people can get a key (email or URL); shown in 401 responses and on the API page |
+| `SITELENS_PUBLIC_API` | off | Set `1` to make the API open to everyone (anonymous limits apply) |
+| `SITELENS_ANON_PER_HOUR` | `60` | Analyses per hour per IP for website visitors |
 | `SITELENS_KEY_PER_HOUR` | `1000` | Analyses per hour per key |
 | `SITELENS_CACHE_HOURS` | `6` | Report cache lifetime |
 | `SITELENS_TRUST_PROXY` | off | Set `1` behind a reverse proxy to rate-limit by `X-Forwarded-For` |
