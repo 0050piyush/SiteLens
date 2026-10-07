@@ -114,6 +114,10 @@ button.chip:hover { color: var(--ink); }
 .bigsearch input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0 12px; font-size: 17px; height: 48px; outline: none; }
 .bigsearch .btn { height: 48px; padding: 0 22px; font-size: 16px; }
 .examples { margin-top: 16px; justify-content: center; }
+.hero .recent-row { margin-top: 10px; justify-content: center; }
+.card .recent-row { margin-top: 12px; }
+.clear-chip { background: transparent; color: var(--muted); }
+.clear-chip:hover { color: var(--bad-ink); border-color: var(--bad); }
 .features { margin-top: 48px; }
 .feature h3 { margin: 10px 0 6px; font-size: 16px; }
 .feature p { margin: 0; color: var(--ink-2); font-size: 14px; }
@@ -276,3 +280,6 @@ pre { background: var(--surface-2); border-radius: 10px; padding: 14px; overflow
 @media (forced-colors: active) {
   .bar-fill, .st, .tech-dot { forced-color-adjust: none; }
 }
+
+/* Recent-search suggestions come from a <datalist>; hide Chrome's dropdown arrow. */
+input[list]::-webkit-calendar-picker-indicator { display: none !important; }

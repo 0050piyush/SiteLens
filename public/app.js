@@ -71,13 +71,6 @@ function hasBackend() {
   return backendPromise;
 }
 
-const liteRecent = () => store.get('sitelens-recent', []);
-function rememberLite(r) {
-  const list = liteRecent().filter((x) => x.domain !== r.domain);
-  list.unshift({ domain: r.domain, icon: r.site.icon, rank: r.rank?.rank ?? null, analyzedAt: r.meta.analyzedAt });
-  store.set('sitelens-recent', list.slice(0, 12));
-}
-
 function liteNotice() {
   return h('div', { class: 'callout', style: { marginTop: '16px' } },
     h('b', null, 'Lite mode. '),
@@ -96,6 +89,104 @@ async function api(path) {
   }
   return body;
 }
+
+// ---- recent searches & saved reports (this browser only) ----------------------
+
+const HISTORY_KEY = 'sitelens-searches';
+const HISTORY_MAX = 5;
+const CACHE_KEY = 'sitelens-reports-v1';
+const CACHE_TTL = 24 * 3600 * 1000;
+const CACHE_MAX = 15;
+
+const recentSearches = () => store.get(HISTORY_KEY, []);
+function addSearch(domain) {
+  store.set(HISTORY_KEY, [domain, ...recentSearches().filter((d) => d !== domain)].slice(0, HISTORY_MAX));
+  refreshSuggestions();
+}
+function clearSearches() {
+  store.set(HISTORY_KEY, []);
+  refreshSuggestions();
+}
+// Feeds the <datalist> that the search and compare inputs use for suggestions.
+function refreshSuggestions() {
+  const list = document.getElementById('recent-domains');
+  if (list) list.replaceChildren(...recentSearches().map((d) => h('option', { value: d })));
+}
+
+// Reports are kept in memory and in localStorage so revisiting a site or
+// adding it to a comparison is instant. "Re-run" bypasses the cache.
+let memCache = null;
+function cacheAll() {
+  if (!memCache) {
+    const raw = store.get(CACHE_KEY, {});
+    memCache = new Map(Object.entries(raw && typeof raw === 'object' ? raw : {}));
+  }
+  return memCache;
+}
+function persistCache() {
+  const entries = [...cacheAll()].sort((a, b) => b[1].at - a[1].at);
+  // Drop the oldest entries until it fits in localStorage.
+  for (let keep = Math.min(entries.length, CACHE_MAX); keep >= 0; keep = keep > 4 ? Math.floor(keep / 2) : keep - 1) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(Object.fromEntries(entries.slice(0, keep))));
+      return;
+    } catch { /* quota exceeded or storage unavailable: try with fewer */ }
+  }
+}
+function readCached(key) {
+  const hit = cacheAll().get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_TTL) {
+    cacheAll().delete(key);
+    persistCache();
+    return null;
+  }
+  return hit;
+}
+function writeCached(key, report) {
+  const all = cacheAll();
+  all.delete(key);
+  all.set(key, { at: Date.now(), report });
+  const sorted = [...all].sort((a, b) => b[1].at - a[1].at);
+  for (const [k] of sorted.slice(CACHE_MAX)) all.delete(k);
+  persistCache();
+}
+function clearCachedReports() {
+  cacheAll().clear();
+  try { localStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
+}
+const cachedCount = () => cacheAll().size;
+
+/** One report per domain: from the cache when possible, otherwise analyzed (full or lite). */
+async function getReport(domain, { fresh = false } = {}) {
+  const full = await hasBackend();
+  const key = `${full ? 'full' : 'lite'}:${domain}`;
+  if (!fresh) {
+    const hit = readCached(key);
+    if (hit) return { report: hit.report, cachedAt: hit.at };
+  }
+  const report = full
+    ? await api(`/api/v1/analyze/${encodeURIComponent(domain)}${fresh ? '?fresh=1' : ''}`)
+    : await analyzeLite(domain);
+  if (report.reachable) writeCached(key, report);
+  return { report, cachedAt: null };
+}
+
+function recentSearchesRow({ onPick } = {}) {
+  const items = recentSearches();
+  if (!items.length) return null;
+  const row = h('div', { class: 'chips recent-row' },
+    h('span', { class: 'muted small', style: { alignSelf: 'center' } }, 'Recent:'),
+    items.map((d) => (onPick
+      ? h('button', { class: 'chip', type: 'button', onclick: () => onPick(d) }, cachedFor(d) ? '⚡ ' : '', d)
+      : h('a', { class: 'chip', href: `#/site/${d}`, title: cachedFor(d) ? 'Saved: opens instantly' : null }, cachedFor(d) ? '⚡ ' : '', d))),
+    h('button', {
+      class: 'chip clear-chip', type: 'button', 'aria-label': 'Clear recent searches',
+      onclick: () => { clearSearches(); row.remove(); },
+    }, '✕ Clear'));
+  return row;
+}
+const cachedFor = (d) => [...cacheAll().keys()].some((k) => k.endsWith(`:${d}`) && readCached(k));
 
 // ---- local watchlist ---------------------------------------------------------
 
@@ -139,7 +230,7 @@ function siteTile(s) {
 }
 
 function searchForm({ big = false } = {}) {
-  const input = h('input', { name: 'q', type: 'text', placeholder: 'Enter any website, e.g. stripe.com', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Website to analyze', autofocus: big || null });
+  const input = h('input', { name: 'q', type: 'text', placeholder: 'Enter any website, e.g. stripe.com', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Website to analyze', autofocus: big || null, list: 'recent-domains' });
   const form = h('form', { class: 'bigsearch', role: 'search' }, input, h('button', { class: 'btn primary', type: 'submit' }, 'Analyze'));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -170,6 +261,9 @@ const FEATURES = [
 
 function homeView() {
   const recentBox = h('div', { class: 'site-tiles' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const recentSection = h('section', { class: 'section' },
+    h('div', { class: 'card-head' }, h('h2', null, 'Recently analyzed on this server'), h('a', { href: '#/top' }, 'See rankings →')),
+    recentBox);
   const watch = watchlist();
   const view = h('div', null,
     h('section', { class: 'hero' },
@@ -179,13 +273,12 @@ function homeView() {
       h('div', { class: 'chips examples' },
         h('span', { class: 'muted small', style: { alignSelf: 'center' } }, 'Try:'),
         ['github.com', 'wikipedia.org', 'stripe.com', 'nytimes.com', 'shopify.com', 'vercel.com'].map((d) =>
-          h('a', { class: 'chip', href: `#/site/${d}` }, d)))),
+          h('a', { class: 'chip', href: `#/site/${d}` }, d))),
+      recentSearchesRow()),
     watch.length ? h('section', { class: 'section' },
       h('h2', null, 'Your watchlist'),
       h('div', { class: 'site-tiles' }, watch.map((w) => siteTile(w)))) : null,
-    h('section', { class: 'section' },
-      h('div', { class: 'card-head' }, h('h2', null, 'Recently analyzed'), h('a', { href: '#/top' }, 'See rankings →')),
-      recentBox),
+    recentSection,
     h('section', { class: 'section grid g3 features' },
       FEATURES.map(([d, t, p]) => h('div', { class: 'card feature' },
         h('div', { class: 'ico' }, svgIcon(d)), h('h3', null, t), h('p', null, p)))),
@@ -205,7 +298,12 @@ function homeView() {
           ['Clickstream traffic sources & demographics', false, true],
         ].map(([f, a, b]) => h('tr', null, h('td', null, f), cell(a), cell(b))))))));
 
-  hasBackend().then((ok) => (ok ? api('/api/v1/recent?limit=12') : { sites: liteRecent() })).then(({ sites }) => {
+  hasBackend().then((ok) => {
+    if (!ok) { recentSection.remove(); return null; }
+    return api('/api/v1/recent?limit=12');
+  }).then((res) => {
+    if (!res) return;
+    const { sites } = res;
     recentBox.replaceChildren(...(sites.length ? sites.map(siteTile) : [h('div', { class: 'muted small' }, 'Nothing analyzed yet. Be the first: search above.')]));
   }).catch(() => recentBox.replaceChildren(h('div', { class: 'muted small' }, 'Could not load recent sites.')));
   return view;
@@ -258,29 +356,33 @@ function loadingView(domain) {
 }
 
 async function siteView(domain, fresh = false) {
-  const loading = loadingView(domain);
-  render(loading);
+  let loading = null;
+  // Only show the progress screen if the report isn't already saved.
+  const showLoading = setTimeout(() => { loading = loadingView(domain); render(loading); }, 120);
   let r;
+  let cachedAt;
   try {
-    r = (await hasBackend())
-      ? await api(`/api/v1/analyze/${encodeURIComponent(domain)}${fresh ? '?fresh=1' : ''}`)
-      : await analyzeLite(domain);
+    ({ report: r, cachedAt } = await getReport(domain, { fresh }));
   } catch (err) {
-    loading.stop();
+    clearTimeout(showLoading);
+    loading?.stop();
     return render(errorView(`Couldn't analyze ${domain}`, err.message, () => siteView(domain, true)));
   }
-  loading.stop();
+  clearTimeout(showLoading);
+  loading?.stop();
   if (currentRoute !== `site:${domain}`) return;
   if (!r.reachable) return render(errorView(`Couldn't reach ${r.host || domain}`, r.error || 'The site did not respond.', () => siteView(domain, true)));
+  addSearch(domain);
   document.title = `${r.domain} · SiteLens`;
-  if (r.mode === 'lite') {
-    rememberLite(r);
-    return render(liteReportView(r));
-  }
-  render(reportView(r));
+  render(r.mode === 'lite' ? liteReportView(r, cachedAt) : reportView(r, cachedAt));
 }
 
-function reportView(r) {
+function freshness(r, cachedAt, verb) {
+  const took = `${verb} ${ago(r.meta.analyzedAt)} in ${(r.meta.durationMs / 1000).toFixed(1)}s`;
+  return h('div', { class: 'muted small' }, took, cachedAt ? h('span', { class: 'chip', style: { marginLeft: '8px' }, title: 'Loaded instantly from your browser. Use Re-run for a fresh check.' }, '⚡ Saved result') : null);
+}
+
+function reportView(r, cachedAt) {
   const prev = watchlist().find((w) => w.domain === r.domain);
   if (prev) { // refresh the stored snapshot so the watchlist stays current
     const list = watchlist().map((w) => (w.domain === r.domain ? snapshot(r) : w));
@@ -314,7 +416,7 @@ function reportView(r) {
           h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
           h('a', { class: 'btn sm', href: apiUrl(`/api/v1/analyze/${r.domain}?format=csv`) }, 'CSV'),
           h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'))),
-      h('div', { class: 'muted small' }, `Analyzed ${ago(r.meta.analyzedAt)} in ${(r.meta.durationMs / 1000).toFixed(1)}s`)),
+      freshness(r, cachedAt, 'Analyzed')),
 
     prev && prev.at !== r.meta.analyzedAt ? changesCallout(prev, r) : null,
 
@@ -628,7 +730,7 @@ function downloadJson(r) {
 
 // ---- lite (browser-only) report ------------------------------------------------
 
-function liteReportView(r) {
+function liteReportView(r, cachedAt) {
   const watchBtn = h('button', { class: 'btn sm', type: 'button' }, isWatched(r.domain) ? '★ Watching' : '☆ Watch');
   watchBtn.addEventListener('click', () => { watchBtn.textContent = toggleWatch(r) ? '★ Watching' : '☆ Watch'; });
   const d = r.dns;
@@ -647,7 +749,7 @@ function liteReportView(r) {
           watchBtn,
           h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
           h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'))),
-      h('div', { class: 'muted small' }, `Checked ${ago(r.meta.analyzedAt)} in ${(r.meta.durationMs / 1000).toFixed(1)}s`)),
+      freshness(r, cachedAt, 'Checked')),
     liteNotice(),
     h('div', { class: 'kpis' },
       rankKpi(r),
@@ -670,29 +772,29 @@ function liteReportView(r) {
     h('section', { class: 'section', id: 'domain' }, h('h2', null, 'Domain & history'), domainView(r)));
 }
 
-async function liteCompare(domains) {
-  const reports = await Promise.all(domains.map((d) => analyzeLite(d).catch((err) => ({ domain: d, reachable: false, error: err.message }))));
+/** Maps a full or lite report to the row shape the comparison view uses. */
+function toCompareSite(r) {
+  const lite = r.mode === 'lite';
   return {
-    lite: true,
-    domains,
-    sites: reports.map((r) => (r.reachable ? {
-      domain: r.domain,
-      reachable: true,
-      icon: r.site.icon,
-      category: null,
-      rank: r.rank?.rank ?? null,
-      monthlyVisits: r.traffic?.monthlyVisits ?? null,
-      scores: null,
-      tech: null,
-      hosting: r.dns?.providers?.hosting || null,
-      providers: r.dns?.providers || null,
-      tls: null,
-      domainAge: r.domainInfo?.rdap?.ageYears ?? null,
-      firstSeen: r.domainInfo?.wayback?.firstSeen ?? null,
-      rankHistory: r.rank?.history || [],
-      emailSecurity: r.emailSecurity?.score ?? null,
-      saas: r.dns?.providers?.verifiedServices?.length ?? null,
-    } : { domain: r.domain, reachable: false, error: r.error })),
+    domain: r.domain,
+    reachable: true,
+    icon: r.site?.icon || null,
+    category: r.category?.primary || null,
+    rank: r.rank?.rank ?? null,
+    monthlyVisits: r.traffic?.monthlyVisits ?? null,
+    scores: lite ? null : r.scores,
+    tech: lite ? null : r.tech.list.map((t) => t.name),
+    hosting: r.dns?.providers?.hosting || null,
+    providers: r.dns?.providers || null,
+    performance: r.performance?.metrics || null,
+    tls: r.tls && !r.tls.error ? { protocol: r.tls.protocol, http2: r.tls.http2 } : null,
+    domainAge: r.domainInfo?.rdap?.ageYears ?? null,
+    firstSeen: r.domainInfo?.wayback?.firstSeen ?? null,
+    rankHistory: r.rank?.history || [],
+    words: r.content?.wordCount ?? null,
+    sitemapUrls: r.files?.sitemap?.urls ?? null,
+    emailSecurity: r.emailSecurity?.score ?? null,
+    saas: r.dns?.providers?.verifiedServices?.length ?? null,
   };
 }
 
@@ -701,7 +803,18 @@ async function liteCompare(domains) {
 async function compareView(list) {
   const domains = list.map(cleanDomain).filter(Boolean).slice(0, 5);
   const inputs = Array.from({ length: Math.max(2, Math.min(5, domains.length + 1)) }, (_, i) =>
-    h('input', { class: 'field', value: domains[i] || '', placeholder: i === 0 ? 'first.com' : 'competitor.com', 'aria-label': `Site ${i + 1}` }));
+    h('input', { class: 'field', value: domains[i] || '', placeholder: i === 0 ? 'first.com' : 'competitor.com', 'aria-label': `Site ${i + 1}`, list: 'recent-domains', autocomplete: 'off' }));
+  // Clicking a recent search drops it into the first empty box (or adds a box).
+  const pick = (d) => {
+    if (inputs.some((i) => cleanDomain(i.value) === d)) return;
+    let target = inputs.find((i) => !i.value.trim());
+    if (!target && inputs.length < 5) {
+      target = h('input', { class: 'field', placeholder: 'competitor.com', 'aria-label': `Site ${inputs.length + 1}`, list: 'recent-domains', autocomplete: 'off' });
+      inputs.at(-1).after(target);
+      inputs.push(target);
+    }
+    if (target) target.value = d;
+  };
   const form = h('form', { class: 'compare-form' }, inputs, h('button', { class: 'btn primary', type: 'submit', style: { height: '44px' } }, 'Compare'));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -712,7 +825,7 @@ async function compareView(list) {
   render(h('div', null,
     h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'Compare websites'),
     h('p', { class: 'muted' }, 'Put up to five sites side by side: traffic, rank trend, scores, stack and infrastructure.'),
-    h('div', { class: 'card' }, form),
+    h('div', { class: 'card' }, form, recentSearchesRow({ onPick: pick })),
     results));
   if (domains.length < 2) {
     results.append(h('div', { class: 'section chips' }, h('span', { class: 'muted small', style: { alignSelf: 'center' } }, 'Ideas:'),
@@ -720,19 +833,26 @@ async function compareView(list) {
         h('a', { class: 'chip', href: `#/compare/${g.join(',')}` }, g.join(' vs ')))));
     return;
   }
-  const loading = loadingView(domains.join(', '));
-  results.append(loading);
-  let data;
-  try {
-    data = (await hasBackend())
-      ? await api(`/api/v1/compare?domains=${encodeURIComponent(domains.join(','))}`)
-      : await liteCompare(domains);
-  } catch (err) {
-    loading.stop();
-    results.replaceChildren(h('div', { class: 'callout err section' }, err.message));
-    return;
-  } finally { loading.stop(); }
-  results.replaceChildren(compareResults(data));
+  const route = currentRoute;
+  let loading = null;
+  const showLoading = setTimeout(() => { loading = loadingView(domains.join(', ')); results.replaceChildren(loading); }, 120);
+  const full = await hasBackend();
+  const fetched = await Promise.all(domains.map((d) => getReport(d)
+    .then(({ report, cachedAt }) => ({ report, cachedAt }))
+    .catch((err) => ({ report: { domain: d, reachable: false, error: err.message } }))));
+  clearTimeout(showLoading);
+  loading?.stop();
+  if (currentRoute !== route) return;
+  fetched.forEach(({ report }, i) => { if (report.reachable) addSearch(domains[i]); });
+  const fromCache = fetched.filter((f) => f.cachedAt).length;
+  const data = {
+    lite: !full,
+    domains,
+    sites: fetched.map(({ report }) => (report.reachable ? toCompareSite(report) : { domain: report.domain || '?', reachable: false, error: report.error })),
+  };
+  results.replaceChildren(
+    fromCache ? h('p', { class: 'muted small section', style: { marginBottom: 0 } }, `⚡ ${fromCache} of ${domains.length} loaded instantly from saved results.`) : '',
+    compareResults(data));
 }
 
 function compareResults(data) {
@@ -1007,4 +1127,5 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
   try { localStorage.setItem('sitelens-theme', root.dataset.theme); } catch { /* ignore */ }
 });
 window.addEventListener('hashchange', route);
+refreshSuggestions();
 route();

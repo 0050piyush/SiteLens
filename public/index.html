@@ -19,7 +19,7 @@
         <span>SiteLens</span>
       </a>
       <form class="topsearch" id="topsearch" role="search">
-        <input name="q" type="text" placeholder="Analyze a domain…" autocomplete="off" spellcheck="false" aria-label="Domain to analyze">
+        <input name="q" type="text" placeholder="Analyze a domain…" autocomplete="off" spellcheck="false" aria-label="Domain to analyze" list="recent-domains">
       </form>
       <nav class="nav" aria-label="Main">
         <a href="#/compare">Compare</a>
@@ -38,6 +38,7 @@
       <span class="muted">Rank data: <a href="https://tranco-list.eu" rel="noopener" target="_blank">Tranco</a> · Registration: RDAP · History: Internet Archive</span>
     </div>
   </footer>
+  <datalist id="recent-domains"></datalist>
   <div id="tooltip" class="tooltip" role="status" hidden></div>
   <script type="module" src="app.js"></script>
 </body>

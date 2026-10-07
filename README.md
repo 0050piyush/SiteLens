@@ -14,6 +14,8 @@ SiteLens is a self-hostable alternative to traffic-intelligence tools such as Si
 | **History** | Registrar, creation and expiry dates, first Internet Archive capture, years archived | RDAP and the Wayback Machine CDX API |
 | **Comparison** | Up to 5 sites side by side with winners highlighted, rank trend overlay, tech overlap, CSV export | All of the above |
 
+Your **last 5 searches** appear as one-click chips and as suggestions in the search and compare boxes, with a Clear button. Reports you've already run are **saved in your browser for 24 hours** (up to 15), so revisiting a site or adding it to a comparison is instant. Re-run forces a fresh check.
+
 There's also a **watchlist** that tells you what changed since your last visit, **rankings** (Tranco top sites plus a leaderboard of every site analyzed on your server), **similar sites** (matched by category, topics, tech stack and outbound links), and a **free REST API** with an in-browser playground.
 
 ### Honest about its limits
