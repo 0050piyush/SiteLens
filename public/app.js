@@ -1142,8 +1142,7 @@ async function pricingView() {
         h('li', null, 'DNS, hosting, email, SaaS & TLS data'),
         h('li', null, h('b', null, 'Bulk analysis'), ` of up to ${fmt(p.bulkMax)} domains per job (JSON or CSV)`),
         h('li', null, h('b', null, `${fmt(p.monitors)} site monitors`), ' with change alerts by webhook'),
-        p.id === 'business' ? h('li', null, 'Priority email support') : null,
-        h('li', { class: 'no' }, 'Rank, traffic & domain history (website only)')),
+        p.id === 'business' ? h('li', null, 'Priority email support') : null),
       cta);
   };
   const view = h('div', null,
@@ -1160,8 +1159,7 @@ async function pricingView() {
           h('li', null, h('b', null, 'Global rank & traffic estimates')),
           h('li', null, 'Domain registration & archive history'),
           h('li', null, 'Tech stack, SEO, performance & security audits'),
-          h('li', null, 'Compare up to 5 sites, watchlist, saved results'),
-          h('li', { class: 'no' }, 'No API access')),
+          h('li', null, 'Compare up to 5 sites, watchlist, saved results')),
         h('a', { class: 'btn plan-cta', href: '#/' }, 'Start analyzing')),
       Object.values(PLANS).map(planCard)),
     featureMatrix(),

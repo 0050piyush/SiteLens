@@ -301,8 +301,6 @@ pre { background: var(--surface-2); border-radius: 10px; padding: 14px; overflow
 .plan-features { list-style: none; padding: 0; margin: 4px 0 16px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; flex: 1; }
 .plan-features li { padding-left: 22px; position: relative; }
 .plan-features li::before { content: '✓'; position: absolute; left: 0; color: var(--good-ink); font-weight: 700; }
-.plan-features li.no { color: var(--muted); }
-.plan-features li.no::before { content: '✕'; color: var(--muted); }
 .plan-cta { width: 100%; }
 .btn.disabled { opacity: 0.55; cursor: default; pointer-events: none; }
 .matrix td:nth-child(2), .matrix td:nth-child(3), .matrix th:nth-child(2), .matrix th:nth-child(3) { text-align: center; }
