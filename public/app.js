@@ -341,7 +341,7 @@ function loadingView(domain) {
   const items = STEPS.map((s) => h('li', null, h('span', { class: 'spinner' }), s));
   const view = h('div', { class: 'loading', 'aria-live': 'polite' },
     h('h2', null, `Analyzing ${domain}`),
-    h('p', { class: 'muted' }, 'Running live checks. This usually takes 3–10 seconds.'),
+    h('p', { class: 'muted' }, 'Running live checks. This usually takes 10–15 seconds.'),
     h('ul', { class: 'steps' }, items));
   let i = 0;
   items[0].classList.add('on');
