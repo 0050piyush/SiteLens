@@ -379,7 +379,26 @@ async function siteView(domain, fresh = false) {
 
 function freshness(r, cachedAt, verb) {
   const took = `${verb} ${ago(r.meta.analyzedAt)} in ${(r.meta.durationMs / 1000).toFixed(1)}s`;
-  return h('div', { class: 'muted small' }, took, cachedAt ? h('span', { class: 'chip', style: { marginLeft: '8px' }, title: 'Loaded instantly from your browser. Use Re-run for a fresh check.' }, '⚡ Saved result') : null);
+  return h('div', { class: 'meta-line muted small' }, h('span', null, took),
+    cachedAt ? h('span', { class: 'chip', title: 'Loaded instantly from your browser. Use Re-run for a fresh check.' }, '⚡ Saved result') : null);
+}
+
+/** Header shared by full and lite reports: icon, linked domain, meta, actions. */
+function reportHeader(r, { chip, verb, cachedAt, details = [], actions = [] }) {
+  const siteUrl = r.url || `https://${r.domain}/`;
+  return h('div', { class: 'report-head', id: 'overview' },
+    h('a', { class: 'head-fav', href: siteUrl, target: '_blank', rel: 'noopener noreferrer nofollow', 'aria-label': `Open ${r.domain}`, tabindex: '-1' },
+      favicon(r.site?.icon, r.domain, 'lg')),
+    h('div', { class: 'head-main' },
+      h('h1', null,
+        h('a', { class: 'site-link', href: siteUrl, target: '_blank', rel: 'noopener noreferrer nofollow', title: `Open ${siteUrl} in a new tab` },
+          r.domain, h('span', { class: 'ext-icon', 'aria-hidden': 'true' }, '↗')),
+        chip),
+      freshness(r, cachedAt, verb)),
+    details.length ? h('div', { class: 'head-details' }, details) : null,
+    h('div', { class: 'report-actions' },
+      h('a', { class: 'btn sm primary', href: siteUrl, target: '_blank', rel: 'noopener noreferrer nofollow' }, 'Open website ↗'),
+      actions));
 }
 
 function reportView(r, cachedAt) {
@@ -403,20 +422,22 @@ function reportView(r, cachedAt) {
   ];
 
   return h('div', null,
-    h('div', { class: 'report-head', id: 'overview' },
-      favicon(r.site?.icon, r.domain, 'lg'),
-      h('div', { class: 'info' },
-        h('h1', null, r.domain, r.category?.primary ? h('span', { class: 'chip accent' }, r.category.primary) : null),
+    reportHeader(r, {
+      verb: 'Analyzed',
+      cachedAt,
+      chip: r.category?.primary ? h('span', { class: 'chip accent' }, r.category.primary) : null,
+      details: [
         r.site?.title ? h('div', { class: 'title' }, r.site.title) : null,
         r.site?.description ? h('p', { class: 'desc' }, r.site.description) : null,
-        h('div', { class: 'report-actions' },
-          ext(r.url, h('span', { class: 'btn sm' }, 'Visit site ↗')),
-          h('a', { class: 'btn sm', href: `#/compare/${r.domain}` }, 'Compare'),
-          watchBtn,
-          h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
-          h('a', { class: 'btn sm', href: apiUrl(`/api/v1/analyze/${r.domain}?format=csv`) }, 'CSV'),
-          h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'))),
-      freshness(r, cachedAt, 'Analyzed')),
+      ].filter(Boolean),
+      actions: [
+        h('a', { class: 'btn sm', href: `#/compare/${r.domain}` }, 'Compare'),
+        watchBtn,
+        h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
+        h('a', { class: 'btn sm', href: apiUrl(`/api/v1/analyze/${r.domain}?format=csv`) }, 'CSV'),
+        h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'),
+      ],
+    }),
 
     prev && prev.at !== r.meta.analyzedAt ? changesCallout(prev, r) : null,
 
@@ -739,17 +760,17 @@ function liteReportView(r, cachedAt) {
   const ageYears = rdap?.ageYears ?? (wb?.firstSeen ? Math.round(((Date.now() - new Date(wb.firstSeen)) / 31557600000) * 10) / 10 : null);
   const es = r.emailSecurity;
   return h('div', null,
-    h('div', { class: 'report-head', id: 'overview' },
-      favicon(r.site?.icon, r.domain, 'lg'),
-      h('div', { class: 'info' },
-        h('h1', null, r.domain, h('span', { class: 'chip' }, 'Lite report')),
-        h('div', { class: 'report-actions', style: { marginTop: '10px' } },
-          ext(r.url, h('span', { class: 'btn sm' }, 'Visit site ↗')),
-          h('a', { class: 'btn sm', href: `#/compare/${r.domain}` }, 'Compare'),
-          watchBtn,
-          h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
-          h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'))),
-      freshness(r, cachedAt, 'Checked')),
+    reportHeader(r, {
+      verb: 'Checked',
+      cachedAt,
+      chip: h('span', { class: 'chip' }, 'Lite report'),
+      actions: [
+        h('a', { class: 'btn sm', href: `#/compare/${r.domain}` }, 'Compare'),
+        watchBtn,
+        h('button', { class: 'btn sm', type: 'button', onclick: () => downloadJson(r) }, 'JSON'),
+        h('button', { class: 'btn sm', type: 'button', onclick: () => siteView(r.domain, true) }, '↻ Re-run'),
+      ],
+    }),
     liteNotice(),
     h('div', { class: 'kpis' },
       rankKpi(r),
@@ -892,7 +913,8 @@ function compareResults(data) {
     ['SaaS tools verified', (s) => s.saas, String, null],
   ];
   const table = h('table', null,
-    h('thead', null, h('tr', null, h('th', null, 'Metric'), ok.map((s) => h('th', { class: 'num' }, h('span', { class: 'nowrap' }, h('i', { style: { display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: color(s), marginRight: '6px' } }), s.domain))))),
+    h('thead', null, h('tr', null, h('th', null, 'Metric'), ok.map((s) => h('th', { class: 'num' }, h('span', { class: 'nowrap' }, h('i', { style: { display: 'inline-block', width: '10px', height: '10px', borderRadius: '3px', background: color(s), marginRight: '6px' } }),
+      h('a', { href: `https://${s.domain}/`, target: '_blank', rel: 'noopener noreferrer nofollow', title: `Open ${s.domain}` }, s.domain, ' ↗')))))),
     h('tbody', null,
       rows.map(([label, get, f, higher]) => {
         const vals = ok.map(get);
