@@ -195,3 +195,34 @@ export async function fetchJson(url, { timeout = 8000 } = {}) {
     return null;
   }
 }
+
+/**
+ * POSTs JSON to a public https URL (used for webhooks). The target is
+ * resolved and checked against the private-address block list, and the
+ * connection is pinned to the checked address. Redirects are not followed.
+ */
+export async function postJson(url, payload, { timeout = 10000, headers = {} } = {}) {
+  const target = new URL(url);
+  if (target.protocol !== 'https:' && !(allowPrivate() && target.protocol === 'http:')) {
+    throw new HttpError(400, 'Webhook URL must use https://');
+  }
+  const { address, family } = await resolvePublic(target.hostname);
+  const body = Buffer.from(JSON.stringify(payload));
+  const lib = target.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = lib.request(target, {
+      method: 'POST',
+      lookup: (_h, options, cb) => (options?.all ? cb(null, [{ address, family }]) : cb(null, address, family)),
+      headers: { 'user-agent': USER_AGENT, 'content-type': 'application/json', 'content-length': body.length, ...headers },
+      timeout,
+      agent: false,
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode }));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new HttpError(504, 'Webhook timed out')));
+    req.on('error', (err) => reject(err instanceof HttpError ? err : new HttpError(502, `Webhook failed: ${err.code || err.message}`)));
+    req.end(body);
+  });
+}

@@ -7,8 +7,11 @@ import { Cache, SiteIndex } from './src/store.js';
 import { normalizeDomain, registrableDomain, HttpError } from './src/util.js';
 import { getRank, trafficEstimate, loadLocalList, downloadList, localListStatus, topSites } from './src/rank.js';
 import { openapi } from './src/openapi.js';
-import { PLANS, DEFAULT_PLAN } from './public/shared/plans.js';
+import { PLANS, DEFAULT_PLAN, FREE_DAILY_REPORTS } from './public/shared/plans.js';
 import { UsageStore } from './src/usage.js';
+import { BulkJobs } from './src/bulk.js';
+import { Monitors, signPayload } from './src/monitors.js';
+import { postJson } from './src/fetcher.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -42,6 +45,18 @@ const CONTACT = process.env.SITELENS_CONTACT || null;
 const LIMITS = {
   anon: { analyses: Number(process.env.SITELENS_ANON_PER_HOUR || 60), requests: 600 },
 };
+// The free website: full reports per visitor (IP) per UTC day.
+const FREE_PER_DAY = Number(process.env.SITELENS_FREE_PER_DAY || FREE_DAILY_REPORTS);
+const freeDaily = new Map(); // ip -> { day, used }
+const today = () => new Date().toISOString().slice(0, 10);
+const tomorrowIso = () => { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.toISOString(); };
+function freeUsed(ip) {
+  const b = freeDaily.get(ip);
+  return b && b.day === today() ? b.used : 0;
+}
+function freeAdd(ip, n) {
+  freeDaily.set(ip, { day: today(), used: freeUsed(ip) + n });
+}
 const limitFor = (caller, kind) => (caller.tier === 'key'
   ? (kind === 'analyses' ? PLANS[caller.plan].hourly : PLANS[caller.plan].hourly * 10)
   : LIMITS.anon[kind]);
@@ -80,7 +95,11 @@ function rateLimit(req, kind, caller) {
   const limit = limitFor(caller, kind);
   return { ok: b[kind] <= limit, limit, remaining: Math.max(0, limit - b[kind]), reset: Math.ceil(b.reset / 1000), tier };
 }
-setInterval(() => { const now = Date.now(); for (const [k, b] of buckets) if (now > b.reset) buckets.delete(k); }, 600_000).unref();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, b] of buckets) if (now > b.reset) buckets.delete(k);
+  for (const [ip, b] of freeDaily) if (b.day !== today()) freeDaily.delete(ip);
+}, 600_000).unref();
 
 const apiKeyOf = (req) => req.headers['x-api-key'] || new URL(req.url, 'http://x').searchParams.get('api_key') || null;
 const clientIp = (req) => (process.env.SITELENS_TRUST_PROXY === '1' && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
@@ -100,6 +119,55 @@ async function getReport(input, { fresh = false } = {}) {
   inflight.set(key, p);
   return { report: await p, cached: false };
 }
+
+const planFor = (key) => (API_KEYS.has(key) ? PLANS[API_KEYS.get(key)] : null);
+
+const bulk = new BulkJobs({
+  getReport: (domain) => getReport(domain).then((x) => x.report),
+  usage,
+  summarizeRow: (report) => ({ ...summarize(report), traffic: report.traffic?.available ? { monthlyVisits: report.traffic.monthlyVisits, low: report.traffic.low, high: report.traffic.high } : null }),
+  csvRow: (report) => reportToCsvRows([report])[1],
+});
+
+async function sendWebhook(url, payload, secret, event) {
+  const body = JSON.stringify(payload);
+  return postJson(url, payload, { headers: { 'x-sitelens-event': event, 'x-sitelens-signature': signPayload(secret, body) } });
+}
+
+const monitors = new Monitors({
+  getReport: (domain) => getReport(domain, { fresh: true }).then((x) => x.report),
+  usage,
+  planFor,
+  sendWebhook,
+  tickMs: Number(process.env.SITELENS_MONITOR_TICK_MS || 5 * 60 * 1000),
+});
+
+/** Reads a request body (JSON or plain text), up to maxBytes. */
+function readBody(req, maxBytes = 256 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { reject(new HttpError(413, 'Request body too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      if (/json/i.test(req.headers['content-type'] || '') || /^\s*[[{]/.test(text)) {
+        try { resolve(text.trim() ? JSON.parse(text) : {}); } catch { reject(new HttpError(400, 'Body is not valid JSON')); }
+      } else resolve(text);
+    });
+    req.on('error', reject);
+  });
+}
+
+function requireKey(caller, feature) {
+  if (caller.tier !== 'key') throw new HttpError(403, `${feature} is available on paid API plans. Send your API key in the X-API-Key header.`);
+  return PLANS[caller.plan];
+}
+
+const allowPortInput = () => process.env.SITELENS_ALLOW_PRIVATE === '1';
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -245,8 +313,8 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     ...stats,
     access: PUBLIC_API ? 'public' : 'API key required (X-API-Key header)',
     contact: CONTACT,
-    limits: LIMITS,
-    plans: Object.values(PLANS).map(({ id, name, price, monthly, hourly }) => ({ id, name, price, monthly, hourly })),
+    limits: { ...LIMITS, freeReportsPerDay: FREE_PER_DAY },
+    plans: Object.values(PLANS).map(({ id, name, price, monthly, hourly, bulkMax, monitors: m }) => ({ id, name, price, monthly, hourly, bulkMax, monitors: m })),
   });
 });
 
@@ -259,6 +327,99 @@ route('GET', '/api/v1/usage', 'requests', async (req, res, _m, _q, caller) => {
     month: usage.month(), used, limit: plan.monthly, remaining: Math.max(0, plan.monthly - used),
     resetsAt: usage.resetsAt(), hourlyLimit: plan.hourly,
   });
+});
+
+// ---- bulk analysis (paid) ----
+
+route('POST', '/api/v1/bulk', 'requests', async (req, res, _m, _q, caller) => {
+  const plan = requireKey(caller, 'Bulk analysis');
+  const body = await readBody(req);
+  const raw = Array.isArray(body) ? body : Array.isArray(body?.domains) ? body.domains
+    : typeof body === 'string' ? body.split(/[\s,;]+/) : [];
+  const inputs = raw.map((d) => String(d).trim()).filter(Boolean);
+  if (!inputs.length) throw new HttpError(400, 'Send {"domains": ["a.com", "b.com"]} or a newline-separated list.');
+  if (inputs.length > plan.bulkMax) throw new HttpError(413, `Your ${plan.name} plan allows up to ${plan.bulkMax} domains per bulk job (got ${inputs.length}).`);
+  const domains = [];
+  const invalid = [];
+  for (const input of inputs) {
+    try {
+      const d = normalizeDomain(input, { allowPort: allowPortInput() });
+      if (!domains.includes(d)) domains.push(d);
+    } catch { invalid.push(input); }
+  }
+  if (!domains.length) throw new HttpError(400, 'None of the domains are valid.', { invalid });
+  const remaining = plan.monthly - usage.used(caller.key);
+  if (domains.length > remaining) {
+    throw new HttpError(429, `This job needs ${domains.length} analyses but your ${plan.name} plan has ${Math.max(0, remaining)} left this month.`, { remaining: Math.max(0, remaining) });
+  }
+  if (bulk.activeFor(caller.key) >= BulkJobs.maxActivePerKey) {
+    throw new HttpError(429, `You already have ${BulkJobs.maxActivePerKey} bulk jobs running. Wait for one to finish.`);
+  }
+  const job = bulk.create({ key: caller.key, plan, domains });
+  send(res, 202, { ...bulk.view(job, { results: false }), invalid, poll: `/api/v1/bulk/${job.id}` });
+});
+
+route('GET', '/api/v1/bulk', 'requests', async (req, res, _m, _q, caller) => {
+  requireKey(caller, 'Bulk analysis');
+  send(res, 200, { jobs: bulk.listFor(caller.key) });
+});
+
+route('GET', '/api/v1/bulk/([^/]+)', 'requests', async (req, res, [id], q, caller) => {
+  requireKey(caller, 'Bulk analysis');
+  const job = bulk.get(id, caller.key);
+  if (!job) throw new HttpError(404, 'No such bulk job (jobs are kept for 24 hours).');
+  if (q.get('format') === 'csv') {
+    const header = reportToCsvRows([])[0];
+    return sendCsv(res, `sitelens-bulk-${id.slice(0, 8)}.csv`, [header, ...job.csvRows.filter(Boolean)]);
+  }
+  send(res, 200, bulk.view(job));
+});
+
+// ---- monitoring (paid) ----
+
+route('POST', '/api/v1/monitors', 'requests', async (req, res, _m, _q, caller) => {
+  const plan = requireKey(caller, 'Monitoring');
+  const body = await readBody(req);
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Send JSON: {"domain": "example.com", "webhook": "https://…", "interval": "weekly"}');
+  const domain = normalizeDomain(String(body.domain || ''), { allowPort: allowPortInput() });
+  const interval = body.interval || 'weekly';
+  if (!['daily', 'weekly'].includes(interval)) throw new HttpError(400, 'interval must be "daily" or "weekly"');
+  let webhook;
+  try { webhook = new URL(String(body.webhook || '')); } catch { throw new HttpError(400, 'webhook must be a URL'); }
+  if (webhook.protocol !== 'https:' && !(allowPortInput() && webhook.protocol === 'http:')) throw new HttpError(400, 'webhook must use https://');
+  if (webhook.href.length > 500) throw new HttpError(400, 'webhook URL is too long');
+  if (monitors.countFor(caller.key) >= plan.monitors) {
+    throw new HttpError(403, `Your ${plan.name} plan allows ${plan.monitors} monitors. Delete one or upgrade.`);
+  }
+  const m = monitors.create({ key: caller.key, domain, webhook: webhook.href, interval });
+  // The secret is shown once: use it to verify the X-SiteLens-Signature header.
+  send(res, 201, { ...monitors.view(m, { secret: true }), note: 'Store the secret: webhooks are signed with HMAC-SHA256 in the X-SiteLens-Signature header.' });
+});
+
+route('GET', '/api/v1/monitors', 'requests', async (req, res, _m, _q, caller) => {
+  const plan = requireKey(caller, 'Monitoring');
+  send(res, 200, { limit: plan.monitors, monitors: monitors.listFor(caller.key) });
+});
+
+route('GET', '/api/v1/monitors/([^/]+)', 'requests', async (req, res, [id], _q, caller) => {
+  requireKey(caller, 'Monitoring');
+  const m = monitors.get(id, caller.key);
+  if (!m) throw new HttpError(404, 'No such monitor');
+  send(res, 200, monitors.view(m));
+});
+
+route('DELETE', '/api/v1/monitors/([^/]+)', 'requests', async (req, res, [id], _q, caller) => {
+  requireKey(caller, 'Monitoring');
+  if (!monitors.remove(id, caller.key)) throw new HttpError(404, 'No such monitor');
+  send(res, 200, { deleted: id });
+});
+
+route('POST', '/api/v1/monitors/([^/]+)/test', 'requests', async (req, res, [id], _q, caller) => {
+  requireKey(caller, 'Monitoring');
+  const m = monitors.get(id, caller.key);
+  if (!m) throw new HttpError(404, 'No such monitor');
+  const alert = await monitors.notify(m, 'monitor.test', { message: 'Test webhook from SiteLens', snapshot: m.last });
+  send(res, alert.ok ? 200 : 502, { delivered: alert.ok, ...alert });
 });
 
 route('GET', '/api/openapi.json', 'requests', async (req, res) => send(res, 200, openapi(VERSION)));
@@ -293,7 +454,8 @@ const server = http.createServer(async (req, res) => {
     if (PUBLIC_API) res.setHeader('access-control-allow-origin', '*');
     else if (reqOrigin && ALLOWED_ORIGINS.has(reqOrigin)) res.setHeader('access-control-allow-origin', req.headers.origin);
     res.setHeader('access-control-allow-headers', 'x-api-key, content-type');
-    res.setHeader('access-control-expose-headers', 'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, x-cache, x-plan, x-quota-limit, x-quota-remaining');
+    res.setHeader('access-control-expose-headers', 'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, x-cache, x-plan, x-quota-limit, x-quota-remaining, x-free-limit, x-free-remaining');
+    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const r = routes.find((rt) => rt.method === req.method && rt.re.test(pathname));
     if (!r) return send(res, 404, { error: `No route for ${req.method} ${pathname}`, docs: '/api/openapi.json' });
@@ -311,11 +473,26 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('x-ratelimit-remaining', rl.remaining);
     res.setHeader('x-ratelimit-reset', rl.reset);
     if (!rl.ok) return send(res, 429, { error: `Rate limit exceeded (${rl.limit} ${r.kind}/hour)`, reset: rl.reset });
+    const cost = r.kind !== 'analyses' ? 0 : pathname === '/api/v1/compare'
+      ? Math.min(5, Math.max(1, (url.searchParams.get('domains') || '').split(',').filter((d) => d.trim()).length))
+      : 1;
+    // Free website visitors: a daily allowance of reports (successful ones count).
+    if (caller.tier !== 'key' && cost) {
+      const ip = clientIp(req);
+      const used = freeUsed(ip);
+      res.setHeader('x-free-limit', FREE_PER_DAY);
+      if (used + cost > FREE_PER_DAY) {
+        res.setHeader('x-free-remaining', Math.max(0, FREE_PER_DAY - used));
+        return send(res, 429, {
+          error: `Daily free limit reached (${FREE_PER_DAY} reports a day). It resets at midnight UTC, or get an API plan for more.`,
+          upgrade: true, limit: FREE_PER_DAY, resetsAt: tomorrowIso(),
+        });
+      }
+      res.setHeader('x-free-remaining', FREE_PER_DAY - used - cost);
+      res.once('finish', () => { if (res.statusCode < 400) freeAdd(ip, cost); });
+    }
     // Monthly plan quota: one unit per analyzed site (a comparison counts each site).
-    if (caller.tier === 'key' && r.kind === 'analyses') {
-      const cost = pathname === '/api/v1/compare'
-        ? Math.min(5, Math.max(1, (url.searchParams.get('domains') || '').split(',').filter((d) => d.trim()).length))
-        : 1;
+    if (caller.tier === 'key' && cost) {
       const plan = PLANS[caller.plan];
       const used = usage.used(caller.key);
       res.setHeader('x-plan', plan.id);

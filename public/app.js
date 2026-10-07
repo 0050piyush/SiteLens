@@ -1,6 +1,6 @@
 import { lineChart, ring, barList, seriesColor, statusOf, hideTooltip } from './charts.js';
 import { API_BASE, CONTACT } from './config.js';
-import { PLANS } from './shared/plans.js';
+import { PLANS, FREE_DAILY_REPORTS } from './shared/plans.js';
 import { analyzeLite } from './lite.js';
 
 const main = document.getElementById('main');
@@ -249,6 +249,19 @@ function errorView(title, message, retry) {
     h('p', null, h('a', { href: '#/' }, '← Back home')));
 }
 
+function limitView(body) {
+  const resets = body?.resetsAt ? new Date(body.resetsAt).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' }) : null;
+  return h('div', { class: 'loading' },
+    h('h2', null, 'Daily free limit reached'),
+    h('p', { class: 'muted' }, `The free website includes ${plural(body?.limit ?? FREE_DAILY_REPORTS, 'full report')} a day. `,
+      resets ? `It resets at ${resets} (midnight UTC). ` : '',
+      'Saved results and recent searches still open instantly.'),
+    h('p', null, h('a', { class: 'btn primary', href: '#/pricing' }, 'See API plans')),
+    h('p', null, h('a', { href: '#/' }, '← Back home')));
+}
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const isLimit = (err) => err?.status === 429 && err.body?.upgrade;
+
 // ---- views -------------------------------------------------------------------
 
 const FEATURES = [
@@ -368,6 +381,7 @@ async function siteView(domain, fresh = false) {
   } catch (err) {
     clearTimeout(showLoading);
     loading?.stop();
+    if (isLimit(err)) return render(limitView(err.body));
     return render(errorView(`Couldn't analyze ${domain}`, err.message, () => siteView(domain, true)));
   }
   clearTimeout(showLoading);
@@ -862,7 +876,7 @@ async function compareView(list) {
   const full = await hasBackend();
   const fetched = await Promise.all(domains.map((d) => getReport(d)
     .then(({ report, cachedAt }) => ({ report, cachedAt }))
-    .catch((err) => ({ report: { domain: d, reachable: false, error: err.message } }))));
+    .catch((err) => ({ limited: isLimit(err) ? err.body : null, report: { domain: d, reachable: false, error: err.message } }))));
   clearTimeout(showLoading);
   loading?.stop();
   if (currentRoute !== route) return;
@@ -873,7 +887,10 @@ async function compareView(list) {
     domains,
     sites: fetched.map(({ report }) => (report.reachable ? toCompareSite(report) : { domain: report.domain || '?', reachable: false, error: report.error })),
   };
+  const limited = fetched.find((f) => f.limited);
   results.replaceChildren(
+    limited ? h('div', { class: 'callout section' }, h('b', null, 'Daily free limit reached. '),
+      `Some sites couldn't be analyzed: the free website includes ${plural(limited.limited.limit ?? FREE_DAILY_REPORTS, 'report')} a day. `, h('a', { href: '#/pricing' }, 'See API plans →')) : '',
     fromCache ? h('p', { class: 'muted small section', style: { marginBottom: 0 } }, `⚡ ${fromCache} of ${domains.length} loaded instantly from saved results.`) : '',
     compareResults(data));
 }
@@ -1085,15 +1102,19 @@ async function apiView() {
   }
   try {
     const [spec, status] = await Promise.all([api('/api/openapi.json'), api('/api/v1/status')]);
-    endpoints.replaceChildren(...Object.entries(spec.paths).map(([p, ops]) => {
-      select.append(h('option', { value: p }, `GET ${p}`));
-      return h('div', { class: 'endpoint' }, h('span', { class: 'method' }, 'GET'), h('code', null, p), h('span', { class: 'muted small', style: { flexBasis: '100%' } }, ops.get.summary));
-    }));
+    endpoints.replaceChildren(...Object.entries(spec.paths).flatMap(([p, ops]) => Object.entries(ops).map(([method, op]) => {
+      // The playground sends simple GETs only.
+      if (method === 'get' && !p.includes('{id}') && !op['x-paid']) select.append(h('option', { value: p }, `GET ${p}`));
+      return h('div', { class: 'endpoint' }, h('span', { class: `method m-${method}` }, method.toUpperCase()), h('code', null, p),
+        op['x-paid'] ? h('span', { class: 'chip' }, 'Paid plans') : null,
+        h('span', { class: 'muted small', style: { flexBasis: '100%' } }, op.summary));
+    })));
     statusBox.replaceChildren(h('dl', { class: 'kv' },
       h('dt', null, 'Status'), h('dd', null, h('span', { class: 'yes' }, '● '), status.status),
       h('dt', null, 'Version'), h('dd', null, status.version),
       h('dt', null, 'Access'), h('dd', null, status.access),
-      h('dt', null, 'With API key'), h('dd', null, `${status.limits.key.analyses} analyses / hour`),
+      h('dt', null, 'Free website'), h('dd', null, `${status.limits.freeReportsPerDay} reports / day per visitor`),
+      h('dt', null, 'API plans'), h('dd', null, (status.plans || []).map((p) => `${p.name} $${p.price}/mo · ${fmt(p.monthly)}/mo`).join(' · '), ' ', h('a', { href: '#/pricing' }, 'Details')),
       status.contact ? [h('dt', null, 'Get a key'), h('dd', null, status.contact)] : null,
       h('dt', null, 'Indexed sites'), h('dd', null, fmt(status.indexedSites)),
       h('dt', null, 'Analyses run'), h('dd', null, fmt(status.analyses)),
@@ -1136,6 +1157,8 @@ async function pricingView() {
         h('li', null, `Up to ${fmt(p.hourly)} per hour`),
         h('li', null, 'Full reports: traffic, tech, SEO, performance, security'),
         h('li', null, 'Compare, rank, tech and CSV endpoints'),
+        h('li', null, h('b', null, 'Bulk analysis'), ` of up to ${fmt(p.bulkMax)} domains per job (JSON or CSV)`),
+        h('li', null, h('b', null, `${fmt(p.monitors)} site monitors`), ' with change alerts by webhook'),
         p.id === 'business' ? h('li', null, 'Priority email support') : null),
       cta);
   };
@@ -1149,7 +1172,7 @@ async function pricingView() {
         h('div', { class: 'price' }, h('b', null, 'Free')),
         h('p', { class: 'muted small plan-blurb' }, 'Use SiteLens in your browser.'),
         h('ul', { class: 'plan-features' },
-          h('li', null, 'Unlimited site reports on the website'),
+          h('li', null, `${FREE_DAILY_REPORTS} full reports a day on the website`),
           h('li', null, 'Compare up to 5 sites'),
           h('li', null, 'Watchlist, recent searches, saved results'),
           h('li', { class: 'no' }, 'No API access')),
@@ -1159,7 +1182,7 @@ async function pricingView() {
       h('div', { class: 'card' },
         h('h3', null, 'How usage is counted'),
         h('ul', { class: 'faq' },
-          h('li', null, 'Each successful request for a site counts as one analysis. A comparison counts one per site.'),
+          h('li', null, 'Each successful request for a site counts as one analysis. A comparison or bulk job counts one per site, and each monitor check counts one.'),
           h('li', null, 'Failed requests (invalid or unreachable domains) are not counted.'),
           h('li', null, 'Quotas reset on the 1st of each month (UTC). Check yours anytime at ', h('code', null, 'GET /api/v1/usage'), '.'),
           h('li', null, 'Over the limit, the API returns HTTP 429 until the next month or an upgrade.'))),

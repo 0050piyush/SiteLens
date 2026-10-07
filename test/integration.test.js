@@ -7,9 +7,13 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { spawn } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 
 const html = fs.readFileSync(new URL('./fixtures/shop.html', import.meta.url));
 let site;
+let hookServer;
+let hookPort;
+const hooks = [];
 let server;
 let sitePort;
 let apiPort;
@@ -34,6 +38,14 @@ before(async () => {
   });
   sitePort = await listen(site);
 
+  // Receives monitor webhooks.
+  hookServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => { hooks.push({ headers: req.headers, body }); res.end('ok'); });
+  });
+  hookPort = await listen(hookServer);
+
   // quota-key starts one analysis short of the Starter plan's monthly quota.
   fs.writeFileSync(path.join(dataDir, 'usage.json'), JSON.stringify({ month: new Date().toISOString().slice(0, 7), counts: { 'quota-key': 999 } }));
 
@@ -44,7 +56,8 @@ before(async () => {
     cwd: new URL('..', import.meta.url).pathname,
     env: {
       ...process.env, PORT: String(apiPort), HOST: '127.0.0.1', SITELENS_ALLOW_PRIVATE: '1', SITELENS_OFFLINE: '1', SITELENS_DATA_DIR: dataDir,
-      SITELENS_ANON_PER_HOUR: '10', SITELENS_API_KEYS: `${KEY}:business,other-key,quota-key:starter`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
+      SITELENS_ANON_PER_HOUR: '100', SITELENS_FREE_PER_DAY: '5', SITELENS_TRUST_PROXY: '1', SITELENS_MONITOR_TICK_MS: '200',
+      SITELENS_API_KEYS: `${KEY}:business,other-key,quota-key:starter,mon-key:starter`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -57,6 +70,7 @@ before(async () => {
 after(() => {
   server?.kill();
   site?.close();
+  hookServer?.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -153,11 +167,24 @@ test('own website may call the API without a key', async () => {
   assert.equal((await get(target, { origin: `http://127.0.0.1:${apiPort}` })).status, 200);
 });
 
-test('rate limits: website visitors per IP, key holders per key', async () => {
+test('free website visitors get a daily allowance; key holders get plan limits', async () => {
+  const visitor = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '203.0.113.50' };
+  // Failed lookups don't use the allowance.
+  assert.equal((await get('/api/v1/summary/does-not-exist.invalid', visitor)).status, 404);
   let last;
-  for (let i = 0; i < 11; i++) last = await get(`/api/v1/summary/localhost:${sitePort}`, { 'sec-fetch-site': 'same-origin' });
-  assert.equal(last.status, 429);
-  assert.equal(last.headers.get('x-ratelimit-remaining'), '0');
+  for (let i = 0; i < 5; i++) {
+    last = await get(`/api/v1/summary/localhost:${sitePort}`, visitor);
+    assert.equal(last.status, 200, `report ${i + 1}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(last.headers.get('x-free-remaining'), '0');
+  const over = await get(`/api/v1/summary/localhost:${sitePort}`, visitor);
+  assert.equal(over.status, 429);
+  assert.equal(over.body.upgrade, true);
+  assert.match(over.body.error, /Daily free limit reached \(5 reports a day\)/);
+  // Another visitor is unaffected; cheap endpoints don't count.
+  assert.equal((await get(`/api/v1/summary/localhost:${sitePort}`, { ...visitor, 'x-forwarded-for': '203.0.113.51' })).status, 200);
+  assert.equal((await get('/api/v1/recent', visitor)).status, 200);
   const keyed = await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': 'other-key' });
   assert.equal(keyed.status, 200);
   assert.equal(keyed.headers.get('x-plan'), 'starter'); // keys without a plan default to Starter
@@ -191,4 +218,88 @@ test('monthly plan quota is enforced and only successful calls count', async () 
   assert.equal((await get('/api/v1/usage', { 'x-api-key': 'other-key' })).body.used, before + 2);
   // Website visitors have no key, so no usage endpoint.
   assert.equal((await get('/api/v1/usage', { 'sec-fetch-site': 'same-origin' })).status, 401);
+});
+
+const post = async (p, body, headers = { 'x-api-key': KEY }) => {
+  const res = await fetch(`http://127.0.0.1:${apiPort}${p}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { parsed = text; }
+  return { status: res.status, body: parsed };
+};
+const until = async (fn, ms = 10000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > end) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 100));
+  }
+};
+
+test('bulk jobs: key only, plan size limit, dedupe, results and CSV', async () => {
+  const target = `localhost:${sitePort}`;
+  assert.equal((await post('/api/v1/bulk', { domains: [target] }, { 'sec-fetch-site': 'same-origin' })).status, 403);
+  const tooMany = await post('/api/v1/bulk', { domains: Array.from({ length: 101 }, (_, i) => `site${i}.com`) }, { 'x-api-key': 'other-key' });
+  assert.equal(tooMany.status, 413);
+  assert.match(tooMany.body.error, /up to 100 domains/);
+
+  const before = (await get('/api/v1/usage')).body.used;
+  const created = await post('/api/v1/bulk', { domains: [target, 'does-not-exist.invalid', 'not a domain', target] });
+  assert.equal(created.status, 202);
+  assert.equal(created.body.total, 2);
+  assert.deepEqual(created.body.invalid, ['not a domain']);
+  const job = await until(async () => {
+    const r = await get(created.body.poll);
+    return r.body.status === 'completed' && r.body;
+  });
+  assert.deepEqual([job.succeeded, job.failed, job.skipped], [1, 1, 0]);
+  assert.equal(job.results.find((x) => x.status === 'ok').title, 'Acme Outdoor Gear – Shop Tents, Backpacks & Boots');
+  assert.equal((await get('/api/v1/usage')).body.used, before + 1, 'only the successful site is charged');
+  const csv = await get(`${created.body.poll}?format=csv`);
+  assert.equal(csv.body.trim().split('\n').length, 2);
+  assert.equal((await get(created.body.poll, { 'x-api-key': 'other-key' })).status, 404, 'jobs are private to their key');
+  // Plain-text body works too.
+  assert.equal((await post('/api/v1/bulk', `${target}\nexample.invalid`, { 'x-api-key': KEY, 'content-type': 'text/plain' })).status, 202);
+});
+
+test('monitors: baseline check, signed test webhook, plan limit, delete', async () => {
+  const h = { 'x-api-key': 'mon-key' };
+  assert.equal((await post('/api/v1/monitors', { domain: 'a.com', webhook: 'https://x.example/h' }, { 'sec-fetch-site': 'same-origin' })).status, 403);
+  assert.equal((await post('/api/v1/monitors', { domain: 'a.com', webhook: 'ftp://x/h' }, h)).status, 400);
+  assert.equal((await post('/api/v1/monitors', { domain: 'a.com', webhook: 'https://x.example/h', interval: 'hourly' }, h)).status, 400);
+
+  const created = await post('/api/v1/monitors', { domain: `localhost:${sitePort}`, webhook: `http://127.0.0.1:${hookPort}/hook`, interval: 'daily' }, h);
+  assert.equal(created.status, 201);
+  assert.match(created.body.secret, /^[0-9a-f]{48}$/);
+  const id = created.body.id;
+  const baseline = await until(async () => {
+    const r = await get(`/api/v1/monitors/${id}`, h);
+    return r.body.lastCheckedAt && r.body;
+  });
+  assert.equal(baseline.lastStatus, 'baseline recorded');
+  assert.equal(baseline.current.title, 'Acme Outdoor Gear – Shop Tents, Backpacks & Boots');
+  assert.equal(baseline.secret, undefined, 'secret is only shown once');
+  assert.equal(hooks.length, 0, 'no alert for the baseline');
+
+  const test1 = await post(`/api/v1/monitors/${id}/test`, {}, h);
+  assert.equal(test1.status, 200);
+  assert.equal(hooks.length, 1);
+  const hook = hooks[0];
+  assert.equal(hook.headers['x-sitelens-event'], 'monitor.test');
+  const expected = `sha256=${createHmac('sha256', created.body.secret).update(hook.body).digest('hex')}`;
+  assert.equal(hook.headers['x-sitelens-signature'], expected, 'webhook signature verifies');
+
+  // Starter allows 5 monitors.
+  for (let i = 0; i < 4; i++) assert.equal((await post('/api/v1/monitors', { domain: `site${i}.invalid`, webhook: 'https://x.example/h' }, h)).status, 201);
+  const sixth = await post('/api/v1/monitors', { domain: 'six.invalid', webhook: 'https://x.example/h' }, h);
+  assert.equal(sixth.status, 403);
+  assert.match(sixth.body.error, /allows 5 monitors/);
+  assert.equal((await get('/api/v1/monitors', h)).body.monitors.length, 5);
+  assert.equal((await get(`/api/v1/monitors/${id}`)).status, 404, 'monitors are private to their key');
+  const del = await fetch(`http://127.0.0.1:${apiPort}/api/v1/monitors/${id}`, { method: 'DELETE', headers: h });
+  assert.equal(del.status, 200);
+  assert.equal((await get('/api/v1/monitors', h)).body.monitors.length, 4);
 });

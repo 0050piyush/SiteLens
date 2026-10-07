@@ -309,6 +309,8 @@ pre { background: var(--surface-2); border-radius: 10px; padding: 14px; overflow
 .endpoint:first-child { border-top: 0; }
 .method { font-family: var(--mono); font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good-ink); }
 .endpoint code { font-size: 14px; }
+.method.m-post { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent-ink); }
+.method.m-delete { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad-ink); }
 .playground { display: grid; gap: 10px; }
 .playground .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .playground select, .playground input { height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); padding: 0 12px; }

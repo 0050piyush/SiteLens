@@ -65,7 +65,41 @@ export function openapi(version) {
         },
       },
       '/api/v1/recent': { get: { summary: 'Recently analyzed sites', responses: { 200: { description: 'Recent' } } } },
-      '/api/v1/usage': { get: { summary: 'Your key\'s plan, usage this month and remaining quota', responses: { 200: { description: 'Usage' }, 401: err } } },
+      '/api/v1/usage': { get: { 'x-paid': true, summary: 'Your key\'s plan, usage this month and remaining quota', responses: { 200: { description: 'Usage' }, 401: err } } },
+      '/api/v1/bulk': {
+        post: {
+          'x-paid': true,
+          summary: 'Start a bulk job: analyze a list of domains in the background',
+          description: 'Body: {"domains": ["a.com", "b.com"]} or a newline-separated list. Up to 100/500/1000 domains per job (Starter/Pro/Business). Uses one analysis per successful site; failed sites are free. Returns 202 with a job id to poll.',
+          requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { domains: { type: 'array', items: { type: 'string' } } } } }, 'text/plain': { schema: { type: 'string' } } } },
+          responses: { 202: { description: 'Job created' }, 400: err, 403: err, 413: err, 429: err },
+        },
+        get: { 'x-paid': true, summary: 'List your bulk jobs (kept for 24 hours)', responses: { 200: { description: 'Jobs' } } },
+      },
+      '/api/v1/bulk/{id}': {
+        get: {
+          'x-paid': true,
+          summary: 'Bulk job progress and results',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'csv'] } }],
+          responses: { 200: { description: 'Job' }, 404: err },
+        },
+      },
+      '/api/v1/monitors': {
+        post: {
+          'x-paid': true,
+          summary: 'Watch a site and get webhook alerts when it changes',
+          description: 'Body: {"domain": "example.com", "webhook": "https://your.app/hook", "interval": "daily"|"weekly"}. Alerts cover downtime, rank moves, score changes, tech added/removed, hosting and certificate changes. Each check uses one analysis. Webhooks are signed: X-SiteLens-Signature = sha256 HMAC of the body with the monitor secret (returned once, on creation).',
+          responses: { 201: { description: 'Monitor created (includes the signing secret)' }, 400: err, 403: err },
+        },
+        get: { 'x-paid': true, summary: 'List your monitors', responses: { 200: { description: 'Monitors' } } },
+      },
+      '/api/v1/monitors/{id}': {
+        get: { 'x-paid': true, summary: 'Monitor status and check history', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Monitor' }, 404: err } },
+        delete: { 'x-paid': true, summary: 'Stop monitoring a site', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Deleted' }, 404: err } },
+      },
+      '/api/v1/monitors/{id}/test': {
+        post: { 'x-paid': true, summary: 'Send a test webhook', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Delivered' }, 502: err } },
+      },
       '/api/v1/status': { get: { summary: 'Service health, cache and limits', responses: { 200: { description: 'Status' } } } },
     },
   };

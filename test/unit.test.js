@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { createHmac } from 'node:crypto';
 import { normalizeDomain, registrableDomain, countryFromTld } from '../src/util.js';
 import { extractPage, analyzeLinks } from '../src/html.js';
 import { detectTechnologies } from '../src/tech.js';
@@ -11,6 +12,7 @@ import { unzipFirst, visitsForRank, trafficEstimate } from '../src/rank.js';
 import { securityAudit } from '../src/audits.js';
 import { classify } from '../src/classify.js';
 import { Cache } from '../src/store.js';
+import { diffSnapshots, signPayload } from '../src/monitors.js';
 
 const html = fs.readFileSync(new URL('./fixtures/shop.html', import.meta.url), 'utf8');
 
@@ -171,4 +173,21 @@ test('Cache evicts least recently used and expired entries', () => {
   const short = new Cache({ ttlMs: -1 });
   short.set('x', 1);
   assert.equal(short.get('x'), null);
+});
+
+test('diffSnapshots reports meaningful changes only', () => {
+  const base = { reachable: true, title: 'Shop', rank: 1000, scores: { overall: 70, performance: 80, seo: 60, security: 50 }, tech: ['React', 'Stripe'], hosting: 'AWS', tlsIssuer: 'LE', tlsDaysRemaining: 60 };
+  assert.deepEqual(diffSnapshots(null, base), [], 'no alert for the baseline');
+  assert.deepEqual(diffSnapshots(base, { ...base, rank: 1040, scores: { ...base.scores, overall: 73 } }), [], 'small moves are ignored');
+  const changed = diffSnapshots(base, {
+    ...base, rank: 700, scores: { ...base.scores, security: 80 }, tech: ['React', 'Shopify'], hosting: 'Cloudflare', tlsDaysRemaining: 10,
+  });
+  const fields = changed.map((c) => c.field);
+  for (const f of ['rank', 'scores.security', 'tech.added', 'tech.removed', 'hosting', 'tls.expiring']) assert.ok(fields.includes(f), f);
+  assert.match(changed.find((c) => c.field === 'rank').message, /rose from #1000 to #700/);
+  const down = diffSnapshots(base, { ...base, reachable: false });
+  assert.deepEqual(down.map((c) => c.field), ['reachable']);
+  const body = '{"event":"site.changed"}';
+  assert.equal(signPayload('secret', body), `sha256=${createHmac('sha256', 'secret').update(body).digest('hex')}`);
+  assert.notEqual(signPayload('other', body), signPayload('secret', body));
 });
