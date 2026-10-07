@@ -80,8 +80,21 @@ function liteNotice() {
     h('a', { href: 'https://github.com/0050piyush/SiteLens#run-it', target: '_blank', rel: 'noopener' }, 'How to run it →'));
 }
 
-async function api(path) {
-  const res = await fetch(apiUrl(path), { headers: { accept: 'application/json' } });
+// Login session (a bearer token) for the account pages.
+const SESSION_KEY = 'sitelens-session';
+const session = {
+  get() { try { return localStorage.getItem(SESSION_KEY); } catch { return null; } },
+  set(token) { try { localStorage.setItem(SESSION_KEY, token); } catch { /* ignore */ } refreshNav(); },
+  clear() { try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } refreshNav(); },
+};
+
+async function api(path, { method = 'GET', body: payload } = {}) {
+  const headers = { accept: 'application/json' };
+  const token = session.get();
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (payload !== undefined) headers['content-type'] = 'application/json';
+  const res = await fetch(apiUrl(path), { method, headers, body: payload === undefined ? undefined : JSON.stringify(payload) });
+  if (res.status === 401 && token && path.startsWith('/api/v1/account')) session.clear(); // expired session
   let body;
   try { body = await res.json(); } catch { body = { error: `HTTP ${res.status}` }; }
   // An unreachable site still yields a report (with reachable: false).
@@ -1104,7 +1117,7 @@ async function apiView() {
     const [spec, status] = await Promise.all([api('/api/openapi.json'), api('/api/v1/status')]);
     endpoints.replaceChildren(...Object.entries(spec.paths).flatMap(([p, ops]) => Object.entries(ops).map(([method, op]) => {
       // The playground sends simple GETs only.
-      if (method === 'get' && !p.includes('{id}') && !op['x-paid']) select.append(h('option', { value: p }, `GET ${p}`));
+      if (method === 'get' && !p.includes('{id}') && !p.startsWith('/api/v1/account') && !op['x-paid']) select.append(h('option', { value: p }, `GET ${p}`));
       return h('div', { class: 'endpoint' }, h('span', { class: `method m-${method}` }, method.toUpperCase()), h('code', null, p),
         op['x-paid'] ? h('span', { class: 'chip' }, 'Paid plans') : null,
         h('span', { class: 'muted small', style: { flexBasis: '100%' } }, op.summary));
@@ -1195,12 +1208,23 @@ async function pricingView() {
           'SiteLens does not have clickstream panel data, so it does not report traffic sources, referrals or demographics. Visit numbers are model estimates with ranges.'))));
 
   render(view);
-  // Contact for key requests: build-time config first, then the API server's setting.
+  // With online payments on, plan buttons start checkout (logging in first if
+  // needed). Otherwise they email the contact address.
   let contact = CONTACT;
-  if (!contact && (await hasBackend())) {
-    try { contact = (await api('/api/v1/status')).contact || ''; } catch { /* ignore */ }
+  let billing = false;
+  if (await hasBackend()) {
+    try {
+      const st = await api('/api/v1/status');
+      contact ||= st.contact || '';
+      billing = !!st.billing;
+    } catch { /* ignore */ }
   }
   for (const { cta, plan } of ctaBox) {
+    if (billing) {
+      const btn = h('button', { class: cta.className, type: 'button', onclick: () => buyPlan(plan.id, btn) }, `Get ${plan.name}`);
+      cta.replaceWith(btn);
+      continue;
+    }
     const href = contactHref(contact, `SiteLens ${plan.name} API plan`);
     if (href) {
       const a = h('a', { class: cta.className, href, target: href.startsWith('mailto:') ? null : '_blank', rel: 'noopener' }, `Get ${plan.name}`);
@@ -1211,6 +1235,178 @@ async function pricingView() {
       cta.textContent = 'Coming soon';
     }
   }
+}
+
+// ---- accounts ----------------------------------------------------------------------
+
+const returnTo = () => location.href.split('#')[0];
+
+async function buyPlan(planId, btn) {
+  if (!session.get()) { location.hash = `#/login?next=buy:${planId}`; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening checkout…'; }
+  try {
+    const { url } = await api('/api/v1/billing/checkout', { method: 'POST', body: { plan: planId, returnTo: returnTo() } });
+    location.href = url;
+  } catch (err) {
+    if (err.status === 401) { location.hash = `#/login?next=buy:${planId}`; return; }
+    if (btn) { btn.disabled = false; btn.textContent = `Get ${PLANS[planId].name}`; }
+    alert(err.message);
+  }
+}
+
+async function loginView(params) {
+  if (!(await hasBackend())) {
+    return render(h('div', { class: 'loading' }, h('h2', null, 'Accounts need the SiteLens server'),
+      h('p', { class: 'muted' }, 'This copy of SiteLens runs entirely in your browser, so there is nowhere to keep accounts yet.'),
+      h('p', null, h('a', { href: '#/pricing' }, 'See pricing →'))));
+  }
+  const next = params.get('next') || '';
+  // People arriving from a plan button are usually new: start them on sign-up.
+  let mode = params.get('mode') || (next.startsWith('buy:') ? 'signup' : 'login');
+  if (mode !== 'signup') mode = 'login';
+  const email = h('input', { class: 'field', type: 'email', name: 'email', autocomplete: 'email', required: true, placeholder: 'you@company.com', 'aria-label': 'Email' });
+  const password = h('input', { class: 'field', type: 'password', name: 'password', required: true, minlength: '8', placeholder: 'Password (8+ characters)', 'aria-label': 'Password' });
+  const error = h('div', { class: 'form-error', role: 'alert' });
+  const submit = h('button', { class: 'btn primary', type: 'submit', style: { width: '100%', height: '44px' } });
+  const title = h('h1');
+  const switchLink = h('p', { class: 'muted small', style: { textAlign: 'center', margin: '14px 0 0' } });
+  const paint = () => {
+    title.textContent = mode === 'signup' ? 'Create your account' : 'Log in to SiteLens';
+    submit.textContent = mode === 'signup' ? 'Create account' : 'Log in';
+    password.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+    switchLink.replaceChildren(mode === 'signup' ? 'Already have an account? ' : 'New to SiteLens? ',
+      h('a', { href: '#', onclick: (e) => { e.preventDefault(); mode = mode === 'signup' ? 'login' : 'signup'; error.textContent = ''; paint(); } },
+        mode === 'signup' ? 'Log in' : 'Create an account'));
+  };
+  const form = h('form', { class: 'auth-form' }, email, password, error, submit);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    error.textContent = '';
+    submit.disabled = true;
+    try {
+      const res = await api(`/api/v1/auth/${mode === 'signup' ? 'signup' : 'login'}`, { method: 'POST', body: { email: email.value, password: password.value } });
+      session.set(res.token);
+      const buy = /^buy:(starter|pro|business)$/.exec(next)?.[1];
+      if (buy) return buyPlan(buy);
+      location.hash = '#/account';
+    } catch (err) {
+      error.textContent = err.message;
+      submit.disabled = false;
+    }
+  });
+  paint();
+  const plan = /^buy:(\w+)$/.exec(next)?.[1];
+  render(h('div', { class: 'auth-wrap' },
+    h('div', { class: 'card auth-card' },
+      title,
+      plan && PLANS[plan] ? h('p', { class: 'muted small' }, `Log in or create an account to get the ${PLANS[plan].name} plan ($${PLANS[plan].price}/month).`) : h('p', { class: 'muted small' }, 'Buy API plans, get your API key and track usage.'),
+      form,
+      switchLink)));
+  email.focus();
+}
+
+async function accountView(params) {
+  if (!session.get()) { location.hash = '#/login'; return; }
+  render(h('div', { class: 'loading' }, h('p', { class: 'muted' }, 'Loading your account…')));
+  let acct;
+  try {
+    acct = await api('/api/v1/account');
+  } catch (err) {
+    if (err.status === 401) { location.hash = '#/login'; return; }
+    return render(errorView('Could not load your account', err.message, () => accountView(params)));
+  }
+  const justPaid = params.get('checkout') === 'success';
+  // Stripe confirms payment by webhook, which can lag the redirect by a few seconds.
+  if (justPaid && !acct.active) {
+    for (let i = 0; i < 10 && !acct.active; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (currentRoute.split(':')[0] !== 'account') return;
+      try { acct = await api('/api/v1/account'); } catch { break; }
+    }
+  }
+  if (currentRoute.split(':')[0] !== 'account') return;
+
+  const keyBox = h('div');
+  const currentKey = h('p', { class: 'small' });
+  const paintCurrentKey = () => currentKey.replaceChildren(...(acct.apiKey
+    ? ['Current key: ', h('code', null, `${acct.apiKey.prefix}…`)]
+    : [h('span', { class: 'muted' }, 'Create a key to start using the API.')]));
+  paintCurrentKey();
+  const showKey = (fullKey) => {
+    const code = h('code', { class: 'api-key' }, fullKey);
+    const copy = h('button', { class: 'btn sm', type: 'button' }, 'Copy');
+    copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(fullKey); copy.textContent = 'Copied'; } catch { copy.textContent = 'Select & copy'; } });
+    keyBox.replaceChildren(h('div', { class: 'callout' },
+      h('b', null, 'Your new API key. '), 'Copy it now: for your security it is shown only once.',
+      h('div', { class: 'key-row' }, code, copy)));
+  };
+  const rotate = async (btn) => {
+    if (acct.apiKey && !confirm('Create a new key? Your current key stops working immediately.')) return;
+    btn.disabled = true;
+    try {
+      const res = await api('/api/v1/account/key', { method: 'POST', body: {} });
+      acct = res.account;
+      paintCurrentKey();
+      showKey(res.apiKey);
+      btn.textContent = 'Create new key';
+    } catch (err) { alert(err.message); }
+    btn.disabled = false;
+  };
+  const portal = async (btn) => {
+    btn.disabled = true;
+    try { location.href = (await api('/api/v1/billing/portal', { method: 'POST', body: { returnTo: returnTo() } })).url; } catch (err) { alert(err.message); btn.disabled = false; }
+  };
+  const logout = async () => {
+    try { await api('/api/v1/auth/logout', { method: 'POST', body: {} }); } catch { /* ignore */ }
+    session.clear();
+    location.hash = '#/';
+  };
+
+  const u = acct.usage;
+  const pct = u ? Math.min(100, Math.round((u.used / u.limit) * 100)) : 0;
+  const rotateBtn = h('button', { class: 'btn sm', type: 'button' }, acct.apiKey ? 'Create new key' : 'Create API key');
+  rotateBtn.addEventListener('click', () => rotate(rotateBtn));
+  const portalBtn = acct.billing.canManage ? h('button', { class: 'btn sm', type: 'button' }, 'Manage billing') : null;
+  portalBtn?.addEventListener('click', () => portal(portalBtn));
+  const base = API_BASE || location.origin;
+
+  render(h('div', { class: 'account' },
+    h('div', { class: 'card-head' },
+      h('div', null, h('h1', { style: { fontSize: '28px', letterSpacing: '-0.02em' } }, 'Your account'), h('p', { class: 'muted', style: { margin: '6px 0 0' } }, acct.email)),
+      h('button', { class: 'btn sm', type: 'button', onclick: logout }, 'Log out')),
+    justPaid ? h('div', { class: 'callout section', style: { marginTop: '8px' } }, acct.active
+      ? [h('b', null, 'Payment received. '), `Your ${acct.plan.name} plan is active.`]
+      : [h('b', null, 'Payment is processing. '), 'Your plan will appear here shortly. Refresh in a minute.']) : null,
+    h('div', { class: 'section grid g2' },
+      h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('h3', null, 'Plan'), portalBtn),
+        acct.active
+          ? h('div', null,
+            h('div', { class: 'price' }, h('b', null, acct.plan.name), h('span', { class: 'muted' }, ` · $${acct.plan.price}/month`)),
+            h('p', { class: 'muted small' }, acct.status === 'past_due' ? 'Payment is past due. Update your card in Manage billing to keep access.' : `Status: ${acct.status === 'manual' ? 'active (manual)' : acct.status}`),
+            h('div', { class: 'usage' },
+              h('div', { class: 'usage-row' }, h('span', null, 'API analyses this month'), h('b', { class: 'num' }, `${fmt(u.used)} / ${fmt(u.limit)}`)),
+              h('div', { class: 'bar-track', role: 'progressbar', 'aria-valuenow': String(pct), 'aria-valuemin': '0', 'aria-valuemax': '100' },
+                h('div', { class: 'bar-fill', style: { width: `${Math.max(1, pct)}%`, background: pct >= 90 ? 'var(--bad)' : pct >= 70 ? 'var(--warn)' : 'var(--s1)' } })),
+              h('p', { class: 'muted small' }, `Resets ${date(u.resetsAt)} · ${acct.monitors} of ${acct.plan.monitors} monitors in use · bulk jobs up to ${fmt(acct.plan.bulkMax)} domains`)))
+          : h('div', null,
+            h('p', { class: 'muted' }, acct.status === 'canceled' ? 'Your subscription has ended.' : 'You don\'t have an API plan yet.'),
+            acct.billing.enabled
+              ? h('div', { class: 'plan-pick' }, Object.values(PLANS).map((p) => {
+                const b = h('button', { class: `btn${p.featured ? ' primary' : ''}`, type: 'button' }, `${p.name} · $${p.price}/mo`);
+                b.addEventListener('click', () => buyPlan(p.id, b));
+                return b;
+              }))
+              : h('p', null, h('a', { href: '#/pricing' }, 'See plans →')))),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('h3', null, 'API key'), acct.active ? rotateBtn : null),
+        acct.active
+          ? h('div', null,
+            currentKey,
+            keyBox,
+            h('pre', { style: { marginTop: '12px' } }, `curl -H "X-API-Key: YOUR_KEY" \\\n  ${base}/api/v1/analyze/stripe.com`),
+            h('p', { class: 'muted small' }, 'While logged in, the website also uses your plan instead of the free daily limit. ', h('a', { href: '#/api' }, 'API docs →')))
+          : h('p', { class: 'muted small' }, 'Your API key appears here once you have a plan.')))));
 }
 
 // ---- router ----------------------------------------------------------------------
@@ -1224,7 +1420,9 @@ function render(node) {
 function route() {
   const hash = location.hash || '#/';
   if (!hash.startsWith('#/')) return; // in-page anchors (skip link, section nav)
-  const [, view, arg = ''] = hash.match(/^#\/([^/]*)\/?(.*)$/) || [];
+  const [path, query = ''] = hash.split('?');
+  const params = new URLSearchParams(query);
+  const [, view, arg = ''] = path.match(/^#\/([^/]*)\/?(.*)$/) || [];
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#/${view}`));
   document.title = 'SiteLens · Website intelligence';
   window.scrollTo(0, 0);
@@ -1236,6 +1434,8 @@ function route() {
     case 'top': return topView(decoded || 'global');
     case 'api': return apiView();
     case 'pricing': return pricingView();
+    case 'login': return loginView(params);
+    case 'account': return accountView(params);
     default: return render(homeView());
   }
 }
@@ -1252,7 +1452,16 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
   root.dataset.theme = dark ? 'light' : 'dark';
   try { localStorage.setItem('sitelens-theme', root.dataset.theme); } catch { /* ignore */ }
 });
+function refreshNav() {
+  const link = document.getElementById('nav-account');
+  if (!link) return;
+  const loggedIn = !!session.get();
+  link.textContent = loggedIn ? 'Account' : 'Log in';
+  link.setAttribute('href', loggedIn ? '#/account' : '#/login');
+}
+
 window.addEventListener('hashchange', route);
+refreshNav();
 refreshSuggestions();
 // Rankings and API need the SiteLens server; hide them in browser-only mode.
 hasBackend().then((ok) => {

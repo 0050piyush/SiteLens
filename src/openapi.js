@@ -100,6 +100,9 @@ export function openapi(version) {
       '/api/v1/monitors/{id}/test': {
         post: { 'x-paid': true, summary: 'Send a test webhook', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Delivered' }, 502: err } },
       },
+      '/api/v1/auth/signup': { post: { summary: 'Create an account (website)', responses: { 201: { description: 'Session token and account' }, 400: err, 409: err } } },
+      '/api/v1/auth/login': { post: { summary: 'Log in (website)', responses: { 200: { description: 'Session token and account' }, 401: err } } },
+      '/api/v1/account': { get: { summary: 'Your account, plan and usage (Authorization: Bearer session token)', responses: { 200: { description: 'Account' }, 401: err } } },
       '/api/v1/status': { get: { summary: 'Service health, cache and limits', responses: { 200: { description: 'Status' } } } },
     },
   };

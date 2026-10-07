@@ -83,6 +83,33 @@ The API is **not** open to the public. Requests are allowed when:
 
 Plans are defined in `public/shared/plans.js`, which both the server and the pricing page read. Issue a key by adding `key:plan` to `SITELENS_API_KEYS`, for example `SITELENS_API_KEYS=3f9a…:pro,8c21…:starter` (a key without a plan is Starter). A successful request uses one analysis per site (a comparison of 3 sites uses 3); failed requests are free. Usage is stored in `data/usage.json`, resets on the 1st of each month (UTC), and over-quota calls get `429`. Customers can check usage at `GET /api/v1/usage`.
 
+### Accounts and payments
+
+Customers sign up on the **Log in** page, choose a plan, pay through **Stripe Checkout**, and manage everything on their **Account** page:
+- **Plan:** shows their plan, its status and this month's usage.
+- **API key:** create or rotate it. The full key is shown once; only a hash is stored.
+- **Manage billing:** opens Stripe's billing portal, where they can upgrade, downgrade, cancel, update their card or download invoices.
+
+While logged in with an active plan, the website uses their plan instead of the free daily limit.
+
+**Setting up Stripe:**
+1. In Stripe, create three recurring monthly **prices**: Starter $15, Pro $50 and Business $199. Copy each price ID (`price_…`).
+2. Add a **webhook endpoint** pointing at `https://YOUR-SERVER/api/v1/billing/webhook` with the events `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated` and `customer.subscription.deleted`. Copy its signing secret (`whsec_…`).
+3. Turn on the **Customer portal** (Stripe → Settings → Billing → Customer portal) and allow plan switching between the three prices.
+4. Set these on the server: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS`.
+
+Test with Stripe's test mode keys first (`sk_test_…`, card `4242 4242 4242 4242`). Until all five are set, plan buttons fall back to emailing `SITELENS_CONTACT`.
+
+**Manual payments** (UPI, bank transfer…): set `SITELENS_ADMIN_TOKEN` (16+ random characters). After the customer signs up, grant their plan:
+
+```bash
+curl -X POST https://YOUR-SERVER/api/v1/admin/grant -H "X-Admin-Token: $SITELENS_ADMIN_TOKEN" \
+  -H "content-type: application/json" -d '{"email": "customer@example.com", "plan": "pro"}'
+# {"plan": null} removes it
+```
+
+Accounts are stored in `data/users.json`: passwords as scrypt hashes, and sessions and API keys as SHA-256 hashes. **Keep `data/` on persistent storage and back it up.** Some free hosting tiers (Render's free plan, for one) wipe the disk on each deploy, which would delete accounts. Password reset and email verification need an email provider and aren't built yet; for now, reset a password by deleting the account from `users.json` and having the customer sign up again.
+
 ### Bulk analysis (paid)
 
 ```bash
@@ -139,6 +166,10 @@ Reports are cached for 6 hours, and concurrent requests for the same domain shar
 | `SITELENS_API_KEYS` | none | Comma-separated `key:plan` entries (plan: `starter`, `pro`, `business`). Required for any caller other than your own website |
 | `SITELENS_ALLOWED_ORIGINS` | none | Comma-separated origins of your own frontends allowed to call the API without a key, e.g. `https://0050piyush.github.io` |
 | `SITELENS_CONTACT` | none | Where people can get a key (email or URL); shown in 401 responses and on the API page |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | none | Stripe API key and webhook signing secret (see Accounts and payments) |
+| `STRIPE_PRICE_STARTER` / `_PRO` / `_BUSINESS` | none | Stripe price IDs for each plan |
+| `SITELENS_ADMIN_TOKEN` | none | Enables `POST /api/v1/admin/grant` for manual payments (16+ characters) |
+| `SITELENS_APP_URL` | request origin | Where Stripe sends customers back to, if not the page that started checkout |
 | `SITELENS_PUBLIC_API` | off | Set `1` to make the API open to everyone (anonymous limits apply) |
 | `SITELENS_FREE_PER_DAY` | `10` | Full reports per day per IP for free website visitors |
 | `SITELENS_ANON_PER_HOUR` | `60` | Hourly cap per IP for website visitors |

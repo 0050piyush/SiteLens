@@ -12,6 +12,11 @@ import { UsageStore } from './src/usage.js';
 import { BulkJobs } from './src/bulk.js';
 import { Monitors, signPayload } from './src/monitors.js';
 import { postJson } from './src/fetcher.js';
+import { Accounts } from './src/accounts.js';
+import {
+  billingEnabled, priceFor, createCheckoutSession, createPortalSession, verifyWebhook, applyStripeEvent,
+} from './src/stripe.js';
+import { timingSafeEqual } from 'node:crypto';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -39,7 +44,10 @@ const API_KEYS = new Map(csv(process.env.SITELENS_API_KEYS).map((entry) => {
 const usage = new UsageStore();
 const PUBLIC_API = process.env.SITELENS_PUBLIC_API === '1';
 const ALLOWED_ORIGINS = new Set(csv(process.env.SITELENS_ALLOWED_ORIGINS).map((o) => o.replace(/\/+$/, '').toLowerCase()));
-const OPEN_ROUTES = new Set(['/api/v1/status', '/api/openapi.json']); // health checks and docs
+// Open to anyone: health checks, docs, and endpoints that carry their own
+// authentication (Stripe's signed webhook, the admin token).
+const OPEN_ROUTES = new Set(['/api/v1/status', '/api/openapi.json', '/api/v1/billing/webhook', '/api/v1/admin/grant']);
+const accounts = new Accounts();
 const CONTACT = process.env.SITELENS_CONTACT || null;
 // Hourly limits. Key holders also have a monthly quota from their plan.
 const LIMITS = {
@@ -71,9 +79,21 @@ const originOf = (value) => {
  * Browser headers can be forged by scripts, so the per-IP limits on the
  * "site" tier remain the backstop; keys are what unlock real volume.
  */
+const sessionTokenOf = (req) => /^Bearer\s+([0-9a-f]{64})$/i.exec(req.headers.authorization || '')?.[1] || null;
+
 function callerOf(req) {
   const key = apiKeyOf(req);
-  if (key) return API_KEYS.has(key) ? { tier: 'key', key, plan: API_KEYS.get(key) } : { tier: 'invalid' };
+  if (key) {
+    if (API_KEYS.has(key)) return { tier: 'key', key, plan: API_KEYS.get(key) };
+    const owner = accounts.userForApiKey(key);
+    if (owner) {
+      return accounts.isActive(owner) ? { tier: 'key', key: `user:${owner.id}`, plan: owner.plan, user: owner } : { tier: 'inactive' };
+    }
+    return { tier: 'invalid' };
+  }
+  // Logged-in customers with an active plan use their plan on the website too.
+  const user = accounts.userForSession(sessionTokenOf(req));
+  if (user && accounts.isActive(user)) return { tier: 'key', key: `user:${user.id}`, plan: user.plan, user };
   const host = String(req.headers.host || '').toLowerCase();
   const isOwn = (origin) => !!origin && (ALLOWED_ORIGINS.has(origin) || new URL(origin).host === host);
   const origin = req.headers.origin ? originOf(req.headers.origin) : null;
@@ -120,7 +140,15 @@ async function getReport(input, { fresh = false } = {}) {
   return { report: await p, cached: false };
 }
 
-const planFor = (key) => (API_KEYS.has(key) ? PLANS[API_KEYS.get(key)] : null);
+// Plan for a usage owner: an env key, or "user:<id>" for account keys.
+function planFor(owner) {
+  if (API_KEYS.has(owner)) return PLANS[API_KEYS.get(owner)];
+  if (String(owner).startsWith('user:')) {
+    const u = accounts.byId(owner.slice(5));
+    return u && accounts.isActive(u) ? PLANS[u.plan] : null;
+  }
+  return null;
+}
 
 const bulk = new BulkJobs({
   getReport: (domain) => getReport(domain).then((x) => x.report),
@@ -143,6 +171,20 @@ const monitors = new Monitors({
 });
 
 /** Reads a request body (JSON or plain text), up to maxBytes. */
+function readRaw(req, maxBytes = 256 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { reject(new HttpError(413, 'Request body too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
 function readBody(req, maxBytes = 256 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -312,6 +354,8 @@ route('GET', '/api/v1/status', 'requests', async (req, res) => {
     trancoList: localListStatus(),
     ...stats,
     access: PUBLIC_API ? 'public' : 'API key required (X-API-Key header)',
+    accounts: true,
+    billing: billingEnabled(),
     contact: CONTACT,
     limits: { ...LIMITS, freeReportsPerDay: FREE_PER_DAY },
     plans: Object.values(PLANS).map(({ id, name, price, monthly, hourly, bulkMax, monitors: m }) => ({ id, name, price, monthly, hourly, bulkMax, monitors: m })),
@@ -327,6 +371,134 @@ route('GET', '/api/v1/usage', 'requests', async (req, res, _m, _q, caller) => {
     month: usage.month(), used, limit: plan.monthly, remaining: Math.max(0, plan.monthly - used),
     resetsAt: usage.resetsAt(), hourlyLimit: plan.hourly,
   });
+});
+
+// ---- accounts & billing ----
+
+const authAttempts = new Map(); // ip -> { reset, n }
+function throttleAuth(req) {
+  const ip = clientIp(req);
+  const now = Date.now();
+  let a = authAttempts.get(ip);
+  if (!a || now > a.reset) a = { reset: now + 15 * 60 * 1000, n: 0 };
+  a.n++;
+  authAttempts.set(ip, a);
+  if (a.n > Number(process.env.SITELENS_AUTH_PER_15MIN || 20)) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
+}
+
+function requireUser(req) {
+  const user = accounts.userForSession(sessionTokenOf(req));
+  if (!user) throw new HttpError(401, 'Please log in.');
+  return user;
+}
+
+function accountView(user) {
+  const active = accounts.isActive(user);
+  const plan = user.plan ? PLANS[user.plan] : null;
+  const owner = `user:${user.id}`;
+  return {
+    email: user.email,
+    createdAt: user.createdAt,
+    plan: plan ? { id: plan.id, name: plan.name, price: plan.price, monthly: plan.monthly, bulkMax: plan.bulkMax, monitors: plan.monitors } : null,
+    status: user.status,
+    active,
+    apiKey: user.apiKeyPrefix ? { prefix: user.apiKeyPrefix } : null,
+    usage: active ? { month: usage.month(), used: usage.used(owner), limit: plan.monthly, resetsAt: usage.resetsAt() } : null,
+    monitors: monitors.countFor(owner),
+    billing: { enabled: billingEnabled(), canManage: billingEnabled() && !!user.stripeCustomerId },
+  };
+}
+
+// Where Stripe sends people back to: the page that started checkout, if it is
+// one of our own origins.
+function returnUrlFrom(req, requested) {
+  const host = String(req.headers.host || '').toLowerCase();
+  try {
+    const u = new URL(String(requested || ''));
+    const origin = u.origin.toLowerCase();
+    if ((ALLOWED_ORIGINS.has(origin) || u.host === host) && /^https?:$/.test(u.protocol)) return `${u.origin}${u.pathname}`;
+  } catch { /* fall through */ }
+  if (process.env.SITELENS_APP_URL) return process.env.SITELENS_APP_URL.replace(/#.*$/, '');
+  const proto = req.headers['x-forwarded-proto'] === 'https' || req.socket.encrypted ? 'https' : 'http';
+  return `${proto}://${host}/`;
+}
+
+route('POST', '/api/v1/auth/signup', 'requests', async (req, res) => {
+  throttleAuth(req);
+  const body = await readBody(req, 16 * 1024);
+  const user = accounts.signup(body?.email, body?.password);
+  const token = accounts.createSession(user);
+  send(res, 201, { token, account: accountView(user) });
+});
+
+route('POST', '/api/v1/auth/login', 'requests', async (req, res) => {
+  throttleAuth(req);
+  const body = await readBody(req, 16 * 1024);
+  const user = accounts.login(body?.email, body?.password);
+  const token = accounts.createSession(user);
+  send(res, 200, { token, account: accountView(user) });
+});
+
+route('POST', '/api/v1/auth/logout', 'requests', async (req, res) => {
+  accounts.endSession(sessionTokenOf(req));
+  send(res, 200, { ok: true });
+});
+
+route('GET', '/api/v1/account', 'requests', async (req, res) => {
+  send(res, 200, accountView(requireUser(req)));
+});
+
+route('POST', '/api/v1/account/key', 'requests', async (req, res) => {
+  const user = requireUser(req);
+  if (!accounts.isActive(user)) throw new HttpError(402, 'Choose a plan to get an API key.');
+  const apiKey = accounts.rotateKey(user);
+  send(res, 200, { apiKey, note: 'Copy this key now: it is shown only once. Any previous key stops working.', account: accountView(user) });
+});
+
+route('POST', '/api/v1/billing/checkout', 'requests', async (req, res) => {
+  const user = requireUser(req);
+  if (!billingEnabled()) throw new HttpError(503, 'Online payments are not set up yet.');
+  const body = await readBody(req, 16 * 1024);
+  const plan = String(body?.plan || '');
+  if (!PLANS[plan] || !priceFor(plan)) throw new HttpError(400, 'Unknown plan');
+  if (accounts.isActive(user) && user.stripeSubscriptionId) {
+    throw new HttpError(409, 'You already have a subscription. Use "Manage billing" to change plans.');
+  }
+  const base = returnUrlFrom(req, body?.returnTo);
+  const session = await createCheckoutSession({
+    user, plan, successUrl: `${base}#/account?checkout=success`, cancelUrl: `${base}#/pricing`,
+  });
+  send(res, 200, { url: session.url });
+});
+
+route('POST', '/api/v1/billing/portal', 'requests', async (req, res) => {
+  const user = requireUser(req);
+  if (!billingEnabled() || !user.stripeCustomerId) throw new HttpError(400, 'No billing account yet.');
+  const body = await readBody(req, 16 * 1024);
+  const session = await createPortalSession({ user, returnUrl: `${returnUrlFrom(req, body?.returnTo)}#/account` });
+  send(res, 200, { url: session.url });
+});
+
+route('POST', '/api/v1/billing/webhook', 'requests', async (req, res) => {
+  const raw = await readRaw(req, 1024 * 1024);
+  const event = verifyWebhook(raw, req.headers['stripe-signature']);
+  const result = applyStripeEvent(event, accounts);
+  send(res, 200, { received: true, result });
+});
+
+// For payments taken outside Stripe (bank transfer, UPI…): grant a plan by hand.
+route('POST', '/api/v1/admin/grant', 'requests', async (req, res) => {
+  const token = process.env.SITELENS_ADMIN_TOKEN || '';
+  const given = String(req.headers['x-admin-token'] || '');
+  const ok = token.length >= 16 && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  if (!ok) throw new HttpError(401, 'Admin token required');
+  const body = await readBody(req, 16 * 1024);
+  const user = accounts.byEmail(body?.email || '');
+  if (!user) throw new HttpError(404, 'No account with that email');
+  const plan = body?.plan == null ? null : String(body.plan);
+  if (plan && !PLANS[plan]) throw new HttpError(400, 'Unknown plan');
+  accounts.setPlan(user, { plan, status: plan ? 'manual' : 'canceled' });
+  send(res, 200, { email: user.email, account: accountView(user) });
 });
 
 // ---- bulk analysis (paid) ----
@@ -453,7 +625,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('vary', 'Origin');
     if (PUBLIC_API) res.setHeader('access-control-allow-origin', '*');
     else if (reqOrigin && ALLOWED_ORIGINS.has(reqOrigin)) res.setHeader('access-control-allow-origin', req.headers.origin);
-    res.setHeader('access-control-allow-headers', 'x-api-key, content-type');
+    res.setHeader('access-control-allow-headers', 'x-api-key, content-type, authorization');
     res.setHeader('access-control-expose-headers', 'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, x-cache, x-plan, x-quota-limit, x-quota-remaining, x-free-limit, x-free-remaining');
     res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
@@ -461,6 +633,7 @@ const server = http.createServer(async (req, res) => {
     if (!r) return send(res, 404, { error: `No route for ${req.method} ${pathname}`, docs: '/api/openapi.json' });
     const caller = OPEN_ROUTES.has(pathname) ? { tier: 'anon' } : callerOf(req);
     if (caller.tier === 'invalid') return send(res, 401, { error: 'Invalid API key' });
+    if (caller.tier === 'inactive') return send(res, 402, { error: 'This API key belongs to an account without an active plan. Renew it on your account page.' });
     if (caller.tier === 'none') {
       return send(res, 401, {
         error: 'An API key is required. Send it in the X-API-Key header.',

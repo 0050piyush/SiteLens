@@ -19,6 +19,11 @@ let sitePort;
 let apiPort;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sitelens-test-'));
 const KEY = 'test-key-123';
+const ADMIN_TOKEN = 'admin-token-0123456789abcdef';
+const WHSEC = 'whsec_test_secret';
+let stripeServer;
+let stripePort;
+const stripeCalls = [];
 
 function listen(srv) {
   return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
@@ -46,6 +51,21 @@ before(async () => {
   });
   hookPort = await listen(hookServer);
 
+  // A stand-in for the Stripe API.
+  stripeServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      stripeCalls.push({ path: req.url, auth: req.headers.authorization, body: new URLSearchParams(body) });
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/v1/checkout/sessions') return res.end(JSON.stringify({ id: 'cs_1', url: 'https://checkout.stripe.test/cs_1' }));
+      if (req.url === '/v1/billing_portal/sessions') return res.end(JSON.stringify({ id: 'bps_1', url: 'https://billing.stripe.test/bps_1' }));
+      res.statusCode = 404;
+      res.end('{}');
+    });
+  });
+  stripePort = await listen(stripeServer);
+
   // quota-key starts one analysis short of the Starter plan's monthly quota.
   fs.writeFileSync(path.join(dataDir, 'usage.json'), JSON.stringify({ month: new Date().toISOString().slice(0, 7), counts: { 'quota-key': 999 } }));
 
@@ -58,6 +78,9 @@ before(async () => {
       ...process.env, PORT: String(apiPort), HOST: '127.0.0.1', SITELENS_ALLOW_PRIVATE: '1', SITELENS_OFFLINE: '1', SITELENS_DATA_DIR: dataDir,
       SITELENS_ANON_PER_HOUR: '100', SITELENS_FREE_PER_DAY: '5', SITELENS_TRUST_PROXY: '1', SITELENS_MONITOR_TICK_MS: '200',
       SITELENS_API_KEYS: `${KEY}:business,other-key,quota-key:starter,mon-key:starter`, SITELENS_ALLOWED_ORIGINS: 'https://sitelens.example.github.io/',
+      SITELENS_ADMIN_TOKEN: ADMIN_TOKEN, SITELENS_AUTH_PER_15MIN: '50',
+      STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: `http://127.0.0.1:${stripePort}`,
+      STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_BUSINESS: 'price_business',
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -71,6 +94,7 @@ after(() => {
   server?.kill();
   site?.close();
   hookServer?.close();
+  stripeServer?.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -302,4 +326,100 @@ test('monitors: baseline check, signed test webhook, plan limit, delete', async 
   const del = await fetch(`http://127.0.0.1:${apiPort}/api/v1/monitors/${id}`, { method: 'DELETE', headers: h });
   assert.equal(del.status, 200);
   assert.equal((await get('/api/v1/monitors', h)).body.monitors.length, 4);
+});
+
+test('accounts: signup, login, Stripe checkout, webhook activation, API key, portal', async () => {
+  const site = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.7' };
+  const email = 'buyer@example.com';
+  assert.equal((await post('/api/v1/auth/signup', { email: 'nope', password: 'longenough' }, site)).status, 400);
+  assert.equal((await post('/api/v1/auth/signup', { email, password: 'short' }, site)).status, 400);
+  const signup = await post('/api/v1/auth/signup', { email, password: 'correct horse battery' }, site);
+  assert.equal(signup.status, 201);
+  assert.match(signup.body.token, /^[0-9a-f]{64}$/);
+  assert.equal(signup.body.account.active, false);
+  assert.equal((await post('/api/v1/auth/signup', { email, password: 'correct horse battery' }, site)).status, 409);
+  assert.equal((await post('/api/v1/auth/login', { email, password: 'wrong password' }, site)).status, 401);
+  const login = await post('/api/v1/auth/login', { email: 'Buyer@Example.com ', password: 'correct horse battery' }, site);
+  assert.equal(login.status, 200);
+  const auth = { ...site, authorization: `Bearer ${login.body.token}` };
+
+  const acct = await get('/api/v1/account', auth);
+  assert.deepEqual([acct.body.email, acct.body.active, acct.body.billing.enabled], [email, false, true]);
+  assert.equal((await get('/api/v1/account', site)).status, 401);
+  assert.equal((await post('/api/v1/account/key', {}, auth)).status, 402, 'no key without a plan');
+
+  // Checkout goes to Stripe with the right price, user and return URL.
+  const co = await post('/api/v1/billing/checkout', { plan: 'pro', returnTo: `http://127.0.0.1:${apiPort}/#/pricing` }, auth);
+  assert.equal(co.status, 200);
+  assert.equal(co.body.url, 'https://checkout.stripe.test/cs_1');
+  const call = stripeCalls.at(-1);
+  assert.equal(call.auth, 'Bearer sk_test_fake');
+  assert.equal(call.body.get('line_items[0][price]'), 'price_pro');
+  assert.equal(call.body.get('mode'), 'subscription');
+  assert.equal(call.body.get('customer_email'), email);
+  assert.equal(call.body.get('success_url'), `http://127.0.0.1:${apiPort}/#/account?checkout=success`);
+  const userId = call.body.get('client_reference_id');
+  // A foreign return URL is not used.
+  await post('/api/v1/billing/checkout', { plan: 'pro', returnTo: 'https://evil.example/' }, auth);
+  assert.doesNotMatch(stripeCalls.at(-1).body.get('success_url'), /evil/);
+  assert.equal((await post('/api/v1/billing/checkout', { plan: 'gold' }, auth)).status, 400);
+
+  // Webhooks must be signed.
+  const event = JSON.stringify({ type: 'checkout.session.completed', data: { object: { client_reference_id: userId, customer: 'cus_1', subscription: 'sub_1', metadata: { userId, plan: 'pro' } } } });
+  const sendHook = (body, sig) => fetch(`http://127.0.0.1:${apiPort}/api/v1/billing/webhook`, { method: 'POST', headers: { 'stripe-signature': sig, 'content-type': 'application/json' }, body });
+  assert.equal((await sendHook(event, 't=1,v1=deadbeef')).status, 400);
+  const t = Math.floor(Date.now() / 1000);
+  const sig = `t=${t},v1=${createHmac('sha256', WHSEC).update(`${t}.${event}`).digest('hex')}`;
+  assert.equal((await sendHook(event, sig)).status, 200);
+
+  const active = await get('/api/v1/account', auth);
+  assert.deepEqual([active.body.active, active.body.plan.id, active.body.billing.canManage], [true, 'pro', true]);
+  assert.equal(active.body.apiKey, null, 'no key until the customer creates one');
+
+  // Rotating shows the full key once; it works as an X-API-Key on the Pro plan.
+  const k = await post('/api/v1/account/key', {}, auth);
+  assert.match(k.body.apiKey, /^sl_live_[0-9a-f]{48}$/);
+  assert.equal(k.body.account.apiKey.prefix, k.body.apiKey.slice(0, 16));
+  const k2 = await post('/api/v1/account/key', {}, auth);
+  assert.equal((await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k2.body.apiKey })).status, 200);
+  assert.equal((await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k.body.apiKey })).status, 401, 'old key stops working');
+  k.body.apiKey = k2.body.apiKey;
+  const used = await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k.body.apiKey });
+  assert.equal(used.status, 200);
+  assert.equal(used.headers.get('x-plan'), 'pro');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await get('/api/v1/account', auth)).body.usage.used, 2, 'one call with each key');
+  // Logged-in paying users aren't held to the free daily website limit.
+  const viaSite = await get(`/api/v1/summary/localhost:${sitePort}`, auth);
+  assert.equal(viaSite.headers.get('x-plan'), 'pro');
+  assert.equal(viaSite.headers.get('x-free-limit'), null);
+
+  // Billing portal.
+  const portal = await post('/api/v1/billing/portal', { returnTo: `http://127.0.0.1:${apiPort}/` }, auth);
+  assert.equal(portal.body.url, 'https://billing.stripe.test/bps_1');
+  assert.equal(stripeCalls.at(-1).body.get('customer'), 'cus_1');
+
+  // Cancellation deactivates the key.
+  const cancel = JSON.stringify({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'canceled' } } });
+  const t2 = Math.floor(Date.now() / 1000);
+  await sendHook(cancel, `t=${t2},v1=${createHmac('sha256', WHSEC).update(`${t2}.${cancel}`).digest('hex')}`);
+  assert.equal((await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k.body.apiKey })).status, 402);
+
+  // Logout ends the session.
+  await post('/api/v1/auth/logout', {}, auth);
+  assert.equal((await get('/api/v1/account', auth)).status, 401);
+});
+
+test('admin can grant a plan for manual payments', async () => {
+  const site = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.51.100.8' };
+  const s1 = await post('/api/v1/auth/signup', { email: 'manual@example.com', password: 'another good password' }, site);
+  const auth = { ...site, authorization: `Bearer ${s1.body.token}` };
+  assert.equal((await post('/api/v1/admin/grant', { email: 'manual@example.com', plan: 'starter' }, { 'x-admin-token': 'wrong' })).status, 401);
+  const g = await post('/api/v1/admin/grant', { email: 'manual@example.com', plan: 'starter' }, { 'x-admin-token': ADMIN_TOKEN });
+  assert.equal(g.status, 200);
+  assert.equal(g.body.account.plan.id, 'starter');
+  const k = await post('/api/v1/account/key', {}, auth);
+  assert.equal(k.status, 200);
+  const r = await get(`/api/v1/summary/localhost:${sitePort}`, { 'x-api-key': k.body.apiKey });
+  assert.equal(r.headers.get('x-plan'), 'starter');
 });
