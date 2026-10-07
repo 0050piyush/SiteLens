@@ -109,7 +109,7 @@ function serveStatic(req, res, pathname) {
     if (err) return send(res, 404, { error: 'Not found' });
     res.writeHead(200, {
       'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-      'cache-control': rel === '/index.html' ? 'no-cache' : 'public, max-age=300',
+      'cache-control': 'no-cache', // always revalidate so deploys show up immediately
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'strict-origin-when-cross-origin',
       'content-security-policy': "default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'",

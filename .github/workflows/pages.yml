@@ -41,6 +41,15 @@ jobs:
           fi
           touch public/.nojekyll
 
+      # Give every deploy fresh asset URLs so browsers (phone Safari in
+      # particular) never mix a new page with cached old scripts.
+      - name: Version asset URLs
+        run: |
+          V="${GITHUB_SHA::8}"
+          sed -i -E "s#(href|src)=\"(styles\.css|theme\.js|app\.js|favicon\.svg)\"#\1=\"\2?v=$V\"#g" public/index.html
+          find public -name '*.js' -exec sed -i -E "s#(from '\.{1,2}/[^'?]+\.js)'#\1?v=$V'#g" {} +
+          grep -c "?v=$V" public/index.html
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
