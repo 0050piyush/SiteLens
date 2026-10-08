@@ -1578,12 +1578,45 @@ document.getElementById('topsearch').addEventListener('submit', (e) => {
   const d = cleanDomain(input.value);
   if (d) { go(`#/site/${d}`); input.value = ''; input.blur(); }
 });
-document.getElementById('theme-toggle').addEventListener('click', () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  root.dataset.theme = dark ? 'light' : 'dark';
-  try { localStorage.setItem('sitelens-theme', root.dataset.theme); } catch { /* ignore */ }
+// Theme switch: the new theme spreads out from the button in a circle
+// (View Transitions API) while the sun/moon icon spins in. Browsers without
+// the API, and people who prefer reduced motion, get an instant switch.
+const themeBtn = document.getElementById('theme-toggle');
+const isDark = () => {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+};
+function labelThemeButton() {
+  const label = isDark() ? 'Switch to light theme' : 'Switch to dark theme';
+  themeBtn.setAttribute('aria-label', label);
+  themeBtn.title = label;
+}
+themeBtn.addEventListener('click', () => {
+  const next = isDark() ? 'light' : 'dark';
+  const icon = themeBtn.querySelector('.theme-icon');
+  const apply = () => {
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('sitelens-theme', next); } catch { /* ignore */ }
+    labelThemeButton();
+    icon.classList.remove('spin');
+    void icon.offsetWidth; // restart the animation on quick repeat clicks
+    icon.classList.add('spin');
+  };
+  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return apply();
+  const r = themeBtn.getBoundingClientRect();
+  const x = r.left + r.width / 2;
+  const y = r.top + r.height / 2;
+  const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const transition = document.startViewTransition(apply);
+  transition.ready.then(() => {
+    document.documentElement.animate(
+      { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+      { duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', pseudoElement: '::view-transition-new(root)' },
+    );
+  }).catch(() => { /* skipped transition: the theme is already applied */ });
 });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', labelThemeButton);
+labelThemeButton();
 // What the content pages (pages.js) need from the app.
 const pageCtx = { render, api, hasBackend, contactHref, fmt, CONTACT };
 

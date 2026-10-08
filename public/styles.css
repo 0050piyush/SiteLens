@@ -80,6 +80,25 @@ main.wrap { flex: 1; padding-top: 16px; padding-bottom: 64px; outline: none; }
 .nav a:hover, .nav a.active { background: var(--surface-2); color: var(--ink); text-decoration: none; }
 .icon-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; color: var(--ink-2); }
 .icon-btn:hover { color: var(--ink); }
+
+/* theme switch: moon in light mode, sun in dark mode; the icon spins in on toggle */
+.theme-icon { display: inline-grid; }
+.theme-icon > svg { grid-area: 1 / 1; }
+.icon-sun { display: none; }
+:root[data-theme="dark"] .icon-sun { display: block; }
+:root[data-theme="dark"] .icon-moon { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .icon-sun { display: block; }
+  :root:not([data-theme="light"]) .icon-moon { display: none; }
+}
+.theme-icon.spin { animation: theme-spin 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes theme-spin {
+  from { transform: rotate(-200deg) scale(0.3); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+/* The new theme is revealed in a circle from the button (see app.js), not cross-faded. */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+@media (prefers-reduced-motion: reduce) { .theme-icon.spin { animation: none; } }
 @media (max-width: 720px) {
   .topsearch { display: none; }
   .nav a { padding: 8px 6px; font-size: 14px; }
