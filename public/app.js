@@ -1601,6 +1601,25 @@ function setTheme(theme) {
   icon.classList.add('spin');
 }
 
+/** Where the view-transition snapshot of the page sits, in viewport coordinates. */
+function snapshotBox() {
+  const html = document.documentElement;
+  const vt = getComputedStyle(html, '::view-transition');
+  const group = getComputedStyle(html, '::view-transition-group(root)');
+  const px = (v) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : null);
+  let m = null;
+  try { m = group.transform && group.transform !== 'none' ? new DOMMatrixReadOnly(group.transform) : null; } catch { /* unparsable */ }
+  const left = (px(vt.left) ?? 0) + (m ? m.e : 0);
+  const top = (px(vt.top) ?? 0) + (m ? m.f : 0);
+  return {
+    left,
+    top,
+    width: px(group.width) ?? innerWidth,
+    height: px(group.height) ?? innerHeight,
+    offsetKnown: top !== 0 || left !== 0,
+  };
+}
+
 // The reveal in progress: { anim, target, flipped }, where target is the theme it ends on.
 let reveal = null;
 function toggleTheme() {
@@ -1617,15 +1636,22 @@ function toggleTheme() {
   const r = themeBtn.getBoundingClientRect();
   const x = r.left + r.width / 2;
   const y = r.top + r.height / 2;
-  const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
   const current = { anim: null, target: next, flipped: false };
   reveal = current;
   // :hover doesn't apply while a transition runs; keep the hover colour so the icon doesn't flicker.
   if (themeBtn.matches(':hover')) themeBtn.classList.add('hover-lock');
   const transition = document.startViewTransition(() => setTheme(next));
   transition.ready.then(() => {
+    // Measure in the snapshot's own coordinates: on phones it is larger than the
+    // window (it includes the area under retractable toolbars), and a circle sized
+    // to the window would leave a strip uncovered that snaps in at the end.
+    const box = snapshotBox();
+    const cx = x - box.left;
+    const cy = y - box.top;
+    const extra = box.offsetKnown ? 0 : Math.max(0, box.height - innerHeight); // toolbar area, above or below
+    const radius = Math.hypot(Math.max(cx, box.width - cx), Math.max(cy + extra, box.height - cy)) + 2;
     current.anim = document.documentElement.animate(
-      { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+      { clipPath: [`circle(0px at ${cx}px ${cy}px)`, `circle(${radius}px at ${cx}px ${cy}px)`] },
       { duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', pseudoElement: '::view-transition-new(root)' },
     );
     // After a reversal the circle ends at zero size: switch back before the transition ends.
