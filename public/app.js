@@ -1611,15 +1611,23 @@ function snapshotBox() {
   try { m = group.transform && group.transform !== 'none' ? new DOMMatrixReadOnly(group.transform) : null; } catch { /* unparsable */ }
   const left = (px(vt.left) ?? 0) + (m ? m.e : 0);
   const top = (px(vt.top) ?? 0) + (m ? m.f : 0);
+  // The page's size with all toolbars retracted (100lvh), for browsers that
+  // don't report the snapshot's size.
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:0;left:0;width:100lvw;height:100lvh;visibility:hidden;pointer-events:none';
+  document.body.append(probe);
+  const large = probe.getBoundingClientRect();
+  probe.remove();
   return {
     left,
     top,
-    width: px(group.width) ?? innerWidth,
-    height: px(group.height) ?? innerHeight,
+    width: Math.max(px(group.width) ?? 0, innerWidth, large.width),
+    height: Math.max(px(group.height) ?? 0, innerHeight, large.height),
     offsetKnown: top !== 0 || left !== 0,
   };
 }
 
+const REVEAL_MS = 600;
 // The reveal in progress: { anim, target, flipped }, where target is the theme it ends on.
 let reveal = null;
 function toggleTheme() {
@@ -1639,7 +1647,7 @@ function toggleTheme() {
   const current = { anim: null, target: next, flipped: false };
   reveal = current;
   // :hover doesn't apply while a transition runs; keep the hover colour so the icon doesn't flicker.
-  if (themeBtn.matches(':hover')) themeBtn.classList.add('hover-lock');
+  if (matchMedia('(hover: hover)').matches && themeBtn.matches(':hover')) themeBtn.classList.add('hover-lock');
   const transition = document.startViewTransition(() => setTheme(next));
   transition.ready.then(() => {
     // Measure in the snapshot's own coordinates: on phones it is larger than the
@@ -1650,12 +1658,18 @@ function toggleTheme() {
     const cy = y - box.top;
     const extra = box.offsetKnown ? 0 : Math.max(0, box.height - innerHeight); // toolbar area, above or below
     const radius = Math.hypot(Math.max(cx, box.width - cx), Math.max(cy + extra, box.height - cy)) + 2;
-    current.anim = document.documentElement.animate(
+    const html = document.documentElement;
+    const clip = html.animate(
       { clipPath: [`circle(0px at ${cx}px ${cy}px)`, `circle(${radius}px at ${cx}px ${cy}px)`] },
-      { duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', pseudoElement: '::view-transition-new(root)' },
+      { duration: REVEAL_MS, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', pseudoElement: '::view-transition-new(root)' },
     );
+    // Safety net for the finish: whatever the circle hasn't reached yet fades out
+    // over the last part, so nothing can switch all at once when the transition ends.
+    const fade = html.animate([{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }],
+      { duration: REVEAL_MS, easing: 'ease-in', pseudoElement: '::view-transition-old(root)' });
+    current.anim = { reverse: () => { clip.reverse(); fade.reverse(); } };
     // After a reversal the circle ends at zero size: switch back before the transition ends.
-    current.anim.onfinish = () => { if ((isDark() ? 'dark' : 'light') !== current.target) setTheme(current.target); };
+    clip.onfinish = () => { if ((isDark() ? 'dark' : 'light') !== current.target) setTheme(current.target); };
     if (current.flipped) current.anim.reverse();
   }).catch(() => { /* skipped transition: the theme is already applied */ });
   transition.finished.finally(() => {
