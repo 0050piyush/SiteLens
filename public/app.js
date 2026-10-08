@@ -1591,29 +1591,59 @@ function labelThemeButton() {
   themeBtn.setAttribute('aria-label', label);
   themeBtn.title = label;
 }
-themeBtn.addEventListener('click', () => {
-  const next = isDark() ? 'light' : 'dark';
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem('sitelens-theme', theme); } catch { /* ignore */ }
+  labelThemeButton();
   const icon = themeBtn.querySelector('.theme-icon');
-  const apply = () => {
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('sitelens-theme', next); } catch { /* ignore */ }
-    labelThemeButton();
-    icon.classList.remove('spin');
-    void icon.offsetWidth; // restart the animation on quick repeat clicks
-    icon.classList.add('spin');
-  };
-  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return apply();
+  icon.classList.remove('spin');
+  void icon.offsetWidth; // restart the spin
+  icon.classList.add('spin');
+}
+
+// The reveal in progress: { anim, target, flipped }, where target is the theme it ends on.
+let reveal = null;
+function toggleTheme() {
+  if (reveal) {
+    // Clicking again mid-reveal turns it around: the circle shrinks back into
+    // the button and the page stays on the theme it started from.
+    reveal.target = reveal.target === 'dark' ? 'light' : 'dark';
+    if (reveal.anim) reveal.anim.reverse();
+    else reveal.flipped = !reveal.flipped;
+    return;
+  }
+  const next = isDark() ? 'light' : 'dark';
+  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return setTheme(next);
   const r = themeBtn.getBoundingClientRect();
   const x = r.left + r.width / 2;
   const y = r.top + r.height / 2;
   const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-  const transition = document.startViewTransition(apply);
+  const current = { anim: null, target: next, flipped: false };
+  reveal = current;
+  // :hover doesn't apply while a transition runs; keep the hover colour so the icon doesn't flicker.
+  if (themeBtn.matches(':hover')) themeBtn.classList.add('hover-lock');
+  const transition = document.startViewTransition(() => setTheme(next));
   transition.ready.then(() => {
-    document.documentElement.animate(
+    current.anim = document.documentElement.animate(
       { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
       { duration: 600, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', pseudoElement: '::view-transition-new(root)' },
     );
+    // After a reversal the circle ends at zero size: switch back before the transition ends.
+    current.anim.onfinish = () => { if ((isDark() ? 'dark' : 'light') !== current.target) setTheme(current.target); };
+    if (current.flipped) current.anim.reverse();
   }).catch(() => { /* skipped transition: the theme is already applied */ });
+  transition.finished.finally(() => {
+    if (reveal === current) reveal = null;
+    themeBtn.classList.remove('hover-lock');
+  });
+}
+themeBtn.addEventListener('click', toggleTheme);
+// While a view transition runs, Chrome sends clicks to <html> instead of the
+// element under the pointer. Treat a click on the button's area as a toggle.
+document.addEventListener('click', (e) => {
+  if (!reveal || e.target !== document.documentElement) return;
+  const r = themeBtn.getBoundingClientRect();
+  if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) toggleTheme();
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', labelThemeButton);
 labelThemeButton();
